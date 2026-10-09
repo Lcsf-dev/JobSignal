@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
-import { extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasCiandt, textoDaPagina } from './fontes-html.ts';
+import {
+  extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasApinfo,
+  extrairVagasCatho, extrairVagasCiandt, extrairVagasGeekHunter, extrairVagasGupy,
+  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom,
+  textoDaPagina
+} from './fontes-html.ts';
 
 test('identifica as fontes cadastradas do JobSignal', () => {
   assert.equal(identificarOrigem('https://datum.jobs.recrut.ai/').plataforma, 'recrutai');
@@ -10,8 +15,15 @@ test('identifica as fontes cadastradas do JobSignal', () => {
   assert.equal(identificarOrigem('https://ciandt.com/br/pt-br/carreiras/oportunidades').plataforma, 'ciandt');
   assert.equal(identificarOrigem('https://cwi.com.br/talentos/oportunidades/').plataforma, 'cwi');
   assert.equal(identificarOrigem('https://remotar.com.br/company/303/confitec').identificador, '303');
-  assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs?language=pt_BR').plataforma, 'pendente');
+  assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs?language=pt_BR').plataforma, 'nttdata');
   assert.equal(identificarOrigem('https://careers.nttdata.com/br/pt/search-results').plataforma, 'pendente');
+  assert.equal(identificarOrigem('https://portal.gupy.io/job-search/term=TI').plataforma, 'gupy');
+  assert.equal(identificarOrigem('https://www.infojobs.com.br/vagas-de-ti.aspx').plataforma, 'infojobs');
+  assert.equal(identificarOrigem('https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/').plataforma, 'catho');
+  assert.equal(identificarOrigem('https://www.apinfo.com/apinfo/inc/list4.cfm').plataforma, 'apinfo');
+  assert.equal(identificarOrigem('https://www.nerdin.com.br/vagas.php').plataforma, 'nerdin');
+  assert.equal(identificarOrigem('https://www.geekhunter.com/pt/vagas').plataforma, 'geekhunter');
+  assert.equal(identificarOrigem('https://www.vagas.com.br/vagas-de-ti-em-rio-de-janeiro').plataforma, 'vagas');
 });
 
 test('usa a API Lever paginada para consultar as vagas públicas da CI&T', async () => {
@@ -68,5 +80,42 @@ test('normaliza HTML de detalhe da CWI e entidades comuns', () => {
   assert.equal(vaga.titulo, 'Desenvolvedor(a) Java');
   assert.match(vaga.localidade, /Remoto/);
   assert.match(textoDaPagina('Brasil &amp; vagas'), /Brasil & vagas/);
+});
+
+test('lê os dados públicos embutidos da Gupy e preserva modalidade e localidade', () => {
+  const html = '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"initialJobList":{"data":[{"id":123,"name":"Estágio em Desenvolvimento","jobUrl":"/job/123","workplaceType":"remote","city":"São Paulo","state":"SP","country":"Brazil","description":"TI"}]}}}}</script>';
+  const [vaga] = extrairVagasGupy(html, 'Empresa', 'https://portal.gupy.io/job-search/term=TI');
+  assert.equal(vaga?.idExterno, '123');
+  assert.match(vaga?.localidade ?? '', /Remoto/);
+  assert.match(vaga?.localidade ?? '', /Brasil/);
+});
+
+test('extrai anúncios das listagens públicas dos sete portais estáticos restantes', () => {
+  const infojobs = '<div id="vacancy123456" data-id="123456" class="js_vacancyLoad"><a data-href="/vaga-de-estagio-ti__123456.aspx"></a><h2 class="js_vacancyTitle">Estágio em TI</h2></div>';
+  const catho = '<li data-offer-item="38669900"><article><h2 class="title_offer"><a href="/vagas/estagio-ti/38669900">Estágio em TI</a></h2><p>Remoto</p></article></li>';
+  const apinfo = '<div class="box-vagas linha pd"><span class="cargo">Estágio Desenvolvedor</span><a href="/apinfo/enviecv.cfm?codvaga=85383&amp;pkey=abc">Candidatar</a><p>Home Office</p></div>';
+  const nerdin = '<div class="vaga-card" data-href="vaga_emprego/vaga-estagio-ti-99636.php"><span class="vaga-titulo">Estágio TI</span><span class="vaga-empresa-nome">Empresa X</span><p>Remoto</p></div>';
+  const geekhunter = '<script type="application/ld+json">{"@type":"ItemList","itemListElement":[{"name":"Estágio Desenvolvedor","url":"https://www.geekhunter.com/pt/vagas/estagio-dev"}]}</script><a href="https://www.geekhunter.com/pt/vagas/estagio-dev">Estágio Desenvolvedor</a><p>Remoto Brasil</p>';
+  const vagasCom = '<li class="vaga odd"><a class="link-detalhes-vaga" data-id-vaga="2835175" title="Estagiário(a) - Infraestrutura TI" href="/vagas/v2835175/estagio-ti"></a><span class="emprVaga">Empresa Y</span><span class="vaga-local">Remoto</span></li>';
+  assert.equal(extrairVagasInfojobs(infojobs, 'InfoJobs', 'https://www.infojobs.com.br/vagas-de-ti.aspx').length, 1);
+  assert.equal(extrairVagasCatho(catho, 'Catho', 'https://www.catho.com.br/vagas/ti/')[0]?.titulo, 'Estágio em TI');
+  assert.match(extrairVagasApinfo(apinfo, 'APInfo', 'https://www.apinfo.com/apinfo/inc/list4.cfm')[0]?.url ?? '', /codvaga=85383/);
+  assert.equal(extrairVagasNerdin(nerdin, 'Nerdin', 'https://www.nerdin.com.br/vagas.php')[0]?.idExterno, '99636');
+  assert.equal(extrairVagasGeekHunter(geekhunter, 'GeekHunter', 'https://www.geekhunter.com/pt/vagas')[0]?.titulo, 'Estágio Desenvolvedor');
+  assert.equal(extrairVagasVagasCom(vagasCom, 'Vagas.com', 'https://www.vagas.com.br/vagas-de-ti')[0]?.idExterno, '2835175');
+});
+
+test('normaliza as linhas renderizadas no portal público da NTT DATA', () => {
+  const resposta = { success: true, result: [
+    { selector: '#tableData tbody tr', results: [{
+      html: '<td><a href="/s/offer/123">Pessoa Desenvolvedora Java</a></td><td>Teletrabalho</td><td>Brasil</td>',
+      text: 'Pessoa Desenvolvedora Java\nTeletrabalho\nBrasil'
+    }] },
+    { selector: '#tableData_info', results: [{ text: 'Showing 1 to 3 of 35 entries' }] }
+  ] };
+  const [vaga] = extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs?language=pt_BR&pcountry=Brasil');
+  assert.equal(vaga?.idExterno, '123');
+  assert.match(vaga?.localidade ?? '', /Teletrabalho/);
+  assert.match(vaga?.localidade ?? '', /Brasil/);
 });
 

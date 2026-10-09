@@ -1,8 +1,12 @@
 import type { VagaColetada } from './classificador';
-import { extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut, textoDaPagina } from './fontes-html.ts';
+import {
+  extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut,
+  extrairVagasApinfo, extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
+  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom, textoDaPagina
+} from './fontes-html.ts';
 
 export interface OrigemIdentificada {
-  plataforma: 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'pendente';
+  plataforma: 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'gupy' | 'infojobs' | 'catho' | 'apinfo' | 'nerdin' | 'geekhunter' | 'vagas' | 'nttdata' | 'pendente';
   identificador: string | null;
   url: string;
 }
@@ -32,6 +36,14 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
   if (['remotar.com.br', 'www.remotar.com.br'].includes(host) && partes[0] === 'company' && /^\d+$/.test(partes[1] ?? '')) {
     return { plataforma: 'remotar', identificador: partes[1], url: url.toString() };
   }
+  if (host === 'portal.gupy.io' && url.pathname.startsWith('/job-search/')) return { plataforma: 'gupy', identificador: null, url: url.toString() };
+  if (['www.infojobs.com.br', 'infojobs.com.br'].includes(host) && /^\/vagas-/i.test(url.pathname)) return { plataforma: 'infojobs', identificador: null, url: url.toString() };
+  if (['www.catho.com.br', 'catho.com.br'].includes(host) && /^\/vagas\//i.test(url.pathname)) return { plataforma: 'catho', identificador: null, url: url.toString() };
+  if (['www.apinfo.com', 'apinfo.com'].includes(host) && /^\/apinfo\/inc\/list\d*\.cfm$/i.test(url.pathname)) return { plataforma: 'apinfo', identificador: null, url: url.toString() };
+  if (['www.nerdin.com.br', 'nerdin.com.br'].includes(host) && /^\/vagas\.php$/i.test(url.pathname)) return { plataforma: 'nerdin', identificador: null, url: url.toString() };
+  if (['www.geekhunter.com', 'geekhunter.com'].includes(host) && /^\/pt\/vagas\/?$/i.test(url.pathname)) return { plataforma: 'geekhunter', identificador: null, url: url.toString() };
+  if (['www.vagas.com.br', 'vagas.com.br'].includes(host) && /^\/vagas(?:-|\/)/i.test(url.pathname)) return { plataforma: 'vagas', identificador: null, url: url.toString() };
+  if (host === 'careers.emeal.nttdata.com' && /^\/s\/jobs\/?$/i.test(url.pathname)) return { plataforma: 'nttdata', identificador: 'emeal', url: url.toString() };
   return { plataforma: 'pendente', identificador: null, url: url.toString() };
 }
 
@@ -40,7 +52,9 @@ async function obterTexto(url: string, tipo: 'json' | 'html' = 'json'): Promise<
   const hostOriginal = endereco.hostname;
   const hostsPermitidos = new Set([hostOriginal, hostOriginal.startsWith('www.') ? hostOriginal.slice(4) : `www.${hostOriginal}`]);
   for (let redirecionamentos = 0; redirecionamentos <= 3; redirecionamentos++) {
-    const resposta = await fetch(endereco, { headers: { Accept: tipo === 'json' ? 'application/json' : 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(12000) });
+    const resposta = await fetch(endereco, { headers: {
+      Accept: tipo === 'json' ? 'application/json' : 'text/html', 'User-Agent': 'JobSignal/1.0 (monitor pessoal de vagas)'
+    }, redirect: 'manual', signal: AbortSignal.timeout(25000) });
     if (resposta.status >= 300 && resposta.status < 400) {
       const destino = resposta.headers.get('location');
       if (!destino || redirecionamentos === 3) throw new Error(`Fonte respondeu HTTP ${resposta.status} sem redirecionamento seguro.`);
@@ -63,6 +77,33 @@ async function obterTexto(url: string, tipo: 'json' | 'html' = 'json'): Promise<
 
 async function obterJson(url: string): Promise<unknown> {
   return JSON.parse(await obterTexto(url));
+}
+
+async function rasparComBrowserRun(browser: BrowserRun, plataforma: 'catho' | 'apinfo', url: string): Promise<string> {
+  const ordem: Record<typeof plataforma, number> = { catho: 1, apinfo: 2 };
+  // Browser Run aceita uma chamada de ação rápida a cada 10 s por conta.
+  await new Promise((resolver) => setTimeout(resolver, ordem[plataforma] * 12000));
+  const formularioApinfo = `( () => {
+    const formulario = document.querySelector("#form-busca");
+    const homeOffice = formulario?.querySelector('input[name="estado[]"][value="HO"]');
+    if (formulario && homeOffice) { homeOffice.checked = true; formulario.requestSubmit(); }
+  })();`;
+  const resposta = await browser.quickAction('scrape', {
+    url,
+    ...(plataforma === 'apinfo' ? { addScriptTag: [{ content: formularioApinfo }] } : {}),
+    waitForSelector: { selector: plataforma === 'catho' ? 'li[data-offer-item]' : 'div.box-vagas.linha.pd', timeout: 50000 },
+    gotoOptions: { waitUntil: 'networkidle2', timeout: 45000 },
+    elements: [{ selector: plataforma === 'catho' ? 'li[data-offer-item]' : 'div.box-vagas.linha.pd' }]
+  });
+  if (!resposta.ok) {
+    const detalhe = await resposta.text();
+    throw new Error(`Browser Run ${plataforma === 'catho' ? 'Catho' : 'APInfo'} respondeu HTTP ${resposta.status}${detalhe ? `: ${detalhe.slice(0, 200)}` : '.'}`);
+  }
+  const dados = await resposta.json() as { success?: boolean; errors?: { message?: string }; result?: Array<{ results?: Array<{ html?: string }> }> };
+  if (!dados.success) throw new Error(`Browser Run: ${dados.errors?.message ?? 'não foi possível carregar a listagem.'}`);
+  const html = dados.result?.[0]?.results?.map((item) => item.html ?? '').join('') ?? '';
+  if (!html) throw new Error(`A listagem ${plataforma === 'catho' ? 'Catho' : 'APInfo'} não retornou anúncios renderizados.`);
+  return html;
 }
 
 function textoPlano(valor: unknown): string {
@@ -127,7 +168,84 @@ async function coletarVagasLever(identificador: string, empresa: string): Promis
   throw new Error('A listagem Lever excedeu 300 vagas; a consulta foi interrompida com segurança.');
 }
 
-export async function coletarVagas(origem: OrigemIdentificada, empresa: string): Promise<VagaColetada[]> {
+export async function coletarVagas(origem: OrigemIdentificada, empresa: string, browser?: BrowserRun): Promise<VagaColetada[]> {
+  if (origem.plataforma === 'nttdata') {
+    if (!browser) throw new Error('Serviço Browser Run indisponível para renderizar o portal da NTT DATA.');
+    const coletarPaginas = `(async () => {
+      for (let espera = 0; espera < 80 && !document.querySelector("#tableData tbody tr"); espera++) {
+        await new Promise((resolver) => setTimeout(resolver, 250));
+      }
+      const tabela = document.querySelector("#tableData");
+      if (!tabela) return;
+      const anuncios = new Map();
+      const coletarLinhas = () => {
+        for (const linha of tabela.querySelectorAll("tbody tr")) {
+          const link = linha.querySelector("a[href*='/s/offer/']");
+          if (link) anuncios.set(link.href, { html: linha.outerHTML, text: linha.innerText });
+        }
+      };
+      for (let pagina = 0; pagina < 20; pagina++) {
+        coletarLinhas();
+        const atual = document.querySelector("#tableData_paginate .current")?.textContent?.trim() || "1";
+        const assinaturaAnterior = [...tabela.querySelectorAll("tbody tr a[href*='/s/offer/']")].map((item) => item.href).join("|");
+        const proximo = document.querySelector("#tableData_next");
+        if (proximo?.classList.contains("disabled")) break;
+        if (proximo) proximo.click();
+        else {
+          const linkPagina = [...document.querySelectorAll("#tableData_paginate a")].find((item) => item.textContent?.trim() === String(Number(atual) + 1));
+          if (!linkPagina) break;
+          linkPagina.click();
+        }
+        let paginaMudou = false;
+        for (let espera = 0; espera < 40; espera++) {
+          await new Promise((resolver) => setTimeout(resolver, 250));
+          const assinaturaAtual = [...tabela.querySelectorAll("tbody tr a[href*='/s/offer/']")].map((item) => item.href).join("|");
+          if (assinaturaAtual && assinaturaAtual !== assinaturaAnterior) { paginaMudou = true; break; }
+        }
+        if (!paginaMudou) break;
+      }
+      coletarLinhas();
+      const saida = document.createElement("pre");
+      saida.id = "jobsignal-todos-resultados";
+      saida.textContent = JSON.stringify([...anuncios.values()]);
+      document.body.appendChild(saida);
+    })();`;
+    const resposta = await browser.quickAction('scrape', {
+      url: origem.url,
+      addScriptTag: [{ content: coletarPaginas }],
+      waitForSelector: { selector: '#jobsignal-todos-resultados', timeout: 55000 },
+      gotoOptions: { waitUntil: 'networkidle2', timeout: 45000 },
+      elements: [{ selector: '#jobsignal-todos-resultados' }]
+    });
+    if (!resposta.ok) {
+      const detalhe = await resposta.text();
+      throw new Error(`Browser Run da Cloudflare respondeu HTTP ${resposta.status}${detalhe ? `: ${detalhe.slice(0, 250)}` : '.'}`);
+    }
+    return extrairVagasNttData(await resposta.json(), empresa, origem.url);
+  }
+  if (origem.plataforma === 'apinfo') {
+    if (!browser) throw new Error('Serviço Browser Run indisponível para consultar a APInfo.');
+    return extrairVagasApinfo(await rasparComBrowserRun(browser, 'apinfo', 'https://www.apinfo.com/apinfo/inc/list4.cfm'), empresa, origem.url);
+  }
+  if (origem.plataforma === 'catho') {
+    try {
+      return extrairVagasCatho(await obterTexto(origem.url, 'html'), empresa, origem.url);
+    } catch (erro) {
+      if (!(erro instanceof Error) || !/HTTP 403|HTTP 500|timeout|aborted/i.test(erro.message)) throw erro;
+      if (!browser) throw erro;
+      return extrairVagasCatho(await rasparComBrowserRun(browser, 'catho', origem.url), empresa, origem.url);
+    }
+  }
+  if (['gupy', 'infojobs', 'nerdin', 'geekhunter', 'vagas'].includes(origem.plataforma)) {
+    const html = await obterTexto(origem.url, 'html');
+    switch (origem.plataforma) {
+      case 'gupy': return extrairVagasGupy(html, empresa, origem.url);
+      case 'infojobs': return extrairVagasInfojobs(html, empresa, origem.url);
+      case 'nerdin': return extrairVagasNerdin(html, empresa, origem.url);
+      case 'geekhunter': return extrairVagasGeekHunter(html, empresa, origem.url);
+      case 'vagas': return extrairVagasVagasCom(html, empresa, origem.url);
+    }
+  }
   if (!origem.identificador) throw new Error('Integração pendente para esta fonte.');
   if (origem.plataforma === 'recrutai') {
     const pagina = new URL(origem.url);

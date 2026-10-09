@@ -6,6 +6,7 @@ interface Ambiente {
   DB: D1Database;
   FILA: Queue<{ tarefaId: number }>;
   ASSETS: Fetcher;
+  BROWSER: BrowserRun;
   ACESSO_TOKEN?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
@@ -241,7 +242,7 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
   let novas = 0;
   try {
     const origem = identificarOrigem(tarefa.url);
-    const vagas = await coletarVagas(origem, tarefa.nome);
+    const vagas = await coletarVagas(origem, tarefa.nome, env.BROWSER);
     const configuracao = await configuracaoAtual(env.DB);
     const tipos = JSON.parse(configuracao.tipos) as TipoVaga[];
     for (const vaga of vagas) {

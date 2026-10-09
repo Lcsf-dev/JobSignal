@@ -7,9 +7,9 @@ Informe o nome da empresa e a URL da **página que lista suas vagas**. Exemplos 
 - `https://jobs.lever.co/empresa`
 - `https://job-boards.greenhouse.io/empresa`
 
-Greenhouse e Lever usam as APIs públicas das plataformas. A página de carreiras da CI&T é consultada pela API pública do Lever, com paginação. Também há adaptadores para CWI e listagens públicas da Recrut.ai e da Remotar. A Remotar fornece uma data de cadastro, que é exibida separada da primeira detecção feita pelo JobSignal.
+Greenhouse e Lever usam as APIs públicas das plataformas. A página de carreiras da CI&T é consultada pela API pública do Lever, com paginação. Também há adaptadores para CWI e listagens públicas da Recrut.ai e da Remotar. A Remotar fornece uma data de cadastro, que é exibida separada da primeira detecção feita pelo JobSignal. Listagens públicas de Gupy, InfoJobs, Catho, APInfo, Nerdin, GeekHunter e Vagas.com têm extratores próprios; a APInfo é pesquisada pelo filtro Home Office.
 
-O endereço `careers.emeal.nttdata.com/s/jobs` é o portal EMEAL da NTT DATA e carrega os resultados dinamicamente no navegador. A interface pública foi testada e exibiu vagas do Brasil, mas ainda não foi validada uma rota pública de dados que o Worker consiga consultar; por isso, esse endereço permanece como integração pendente. O domínio `careers.nttdata.com` é outro portal, de outra plataforma, e não deve ser confundido com o EMEAL. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo.
+O endereço `careers.emeal.nttdata.com/s/jobs` é o portal EMEAL da NTT DATA e carrega resultados dinamicamente no navegador. O JobSignal usa o Browser Run da Cloudflare para renderizar a tabela e percorrer as páginas de resultados; o endereço público foi testado e exibiu vagas do Brasil. O domínio `careers.nttdata.com` é outro portal, de outra plataforma, e não deve ser confundido com o EMEAL. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo; bloqueios e mudanças dos próprios sites são registrados como falha da fonte.
 
 ## 🎯 Elegibilidade
 

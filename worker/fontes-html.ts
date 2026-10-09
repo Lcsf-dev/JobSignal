@@ -13,6 +13,199 @@ export function textoDaPagina(valor: string): string {
 
 export interface ResumoVaga { id: string; titulo: string; url: string }
 
+function decodificarAtributo(valor: string): string {
+  return textoDaPagina(valor.replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'"));
+}
+
+function normalizarLink(href: string, base: string): string | null {
+  try {
+    const link = new URL(decodificarAtributo(href), base);
+    return link.protocol === 'https:' ? link.toString() : null;
+  } catch { return null; }
+}
+
+function valoresAtributo(html: string, nome: string): string | null {
+  const escapar = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return html.match(new RegExp(`\\b${escapar}=["']([^"']*)["']`, 'i'))?.[1] ?? null;
+}
+
+function valorDaClasse(html: string, classe: string): string {
+  const escapar = classe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return textoDaPagina(html.match(new RegExp(`<[^>]+class=["'][^"']*\\b${escapar}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/[^>]+>`, 'i'))?.[1] ?? '');
+}
+
+function vagasDoJsonGupy(html: string): Record<string, unknown>[] {
+  const script = html.match(/<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!script) return [];
+  const pagina = JSON.parse(script[1]) as { props?: { pageProps?: { initialJobList?: { data?: unknown; jobs?: unknown } } } };
+  const lista = pagina.props?.pageProps?.initialJobList;
+  const vagas = lista?.data ?? lista?.jobs;
+  return Array.isArray(vagas) ? vagas.filter((vaga): vaga is Record<string, unknown> => !!vaga && typeof vaga === 'object') : [];
+}
+
+export function extrairVagasGupy(html: string, empresa: string, base: string): VagaColetada[] {
+  const vagas = vagasDoJsonGupy(html);
+  if (!vagas.length && !/nenhuma vaga encontrada|nenhuma vaga disponível/i.test(textoDaPagina(html))) {
+    throw new Error('Listagem pública da Gupy sem dados no formato esperado.');
+  }
+  return vagas.slice(0, 100).flatMap((item) => {
+    const id = String(item['id'] ?? '');
+    const titulo = String(item['name'] ?? '').trim();
+    const url = normalizarLink(String(item['jobUrl'] ?? ''), base);
+    if (!id || !titulo || !url) return [];
+    const cidade = String(item['city'] ?? '');
+    const estado = String(item['state'] ?? '');
+    const pais = String(item['country'] ?? item['countryName'] ?? '');
+    const remoto = String(item['workplaceType'] ?? '').toLowerCase() === 'remote';
+    const brasil = /^(br|brasil|brazil)$/i.test(pais) || /^(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)$/i.test(estado);
+    const modalidade = remoto ? 'Remoto' : String(item['workplaceType'] ?? '');
+    const localidade = [modalidade, cidade, estado, brasil ? 'Brasil' : pais].filter(Boolean).join(' · ');
+    const publicada = String(item['publishedDate'] ?? '');
+    return [{ idExterno: id, titulo, empresa: String(item['careerPageName'] ?? empresa), url,
+      localidade, descricao: textoDaPagina(String(item['description'] ?? '')),
+      ...(Number.isFinite(Date.parse(publicada)) ? { publicadaEm: new Date(publicada).toISOString() } : {}) }];
+  });
+}
+
+export function extrairVagasInfojobs(html: string, empresa: string, base: string): VagaColetada[] {
+  const marcadores = [...html.matchAll(/<div\b(?=[^>]*\bdata-id=["'](\d+)["'])(?=[^>]*\bjs_vacancyLoad\b)[^>]*>/gi)];
+  if (!marcadores.length) throw new Error('Listagem do InfoJobs não encontrada no formato esperado.');
+  if (marcadores.length > 100) throw new Error('Listagem do InfoJobs excedeu 100 anúncios.');
+  return marcadores.flatMap((marcador, indice) => {
+    const trecho = html.slice(marcador.index, marcadores[indice + 1]?.index ?? marcador.index + 12000);
+    const id = marcador[1];
+    const href = valoresAtributo(trecho, 'data-href') ?? trecho.match(/<a\b[^>]*href=["']([^"']*__\d+\.aspx[^"']*)["']/i)?.[1];
+    const url = href ? normalizarLink(href, base) : null;
+    const titulo = valorDaClasse(trecho, 'js_vacancyTitle') || textoDaPagina(trecho.match(/<h[23]\b[^>]*>([\s\S]*?)<\/h[23]>/i)?.[1] ?? '');
+    if (!id || !url || !titulo) return [];
+    const texto = textoDaPagina(trecho).slice(0, 3000);
+    const empresaAnuncio = textoDaPagina(trecho.match(/<a\b[^>]*class=["'][^"']*company[^"']*["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] ?? '') || empresa;
+    return [{ idExterno: id, titulo, empresa: empresaAnuncio, url,
+      localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+}
+
+export function extrairVagasCatho(html: string, empresa: string, base: string): VagaColetada[] {
+  const itens = [...html.matchAll(/<li\b(?=[^>]*\bdata-offer-item=["'](\d+)["'])[^>]*>([\s\S]*?)(?=<li\b(?=[^>]*\bdata-offer-item=)|$)/gi)];
+  if (!itens.length) throw new Error('Listagem da Catho não encontrada no formato esperado.');
+  if (itens.length > 100) throw new Error('Listagem da Catho excedeu 100 anúncios.');
+  return itens.flatMap((item) => {
+    const trecho = item[2];
+    const link = trecho.match(/<h2\b[^>]*class=["'][^"']*title_offer[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    const url = link ? normalizarLink(link[1], base) : null;
+    const titulo = link ? textoDaPagina(link[2]) : '';
+    if (!url || !titulo) return [];
+    const texto = textoDaPagina(trecho).slice(0, 3000);
+    return [{ idExterno: item[1], titulo, empresa: valorDaClasse(trecho, 'company') || empresa,
+      url, localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+}
+
+export function extrairVagasApinfo(html: string, empresa: string, base: string): VagaColetada[] {
+  const blocos = html.split(/<div\b[^>]*class=["'][^"']*box-vagas\s+linha\s+pd[^"']*["'][^>]*>/i).slice(1);
+  if (!blocos.length) throw new Error('Listagem da APInfo não encontrada no formato esperado.');
+  if (blocos.length > 100) throw new Error('Listagem da APInfo excedeu 100 anúncios.');
+  return blocos.flatMap((bloco) => {
+    const href = bloco.match(/<a\b[^>]*href=["']([^"']*enviecv\.cfm\?[^"']*codvaga=(\d+)[^"']*)["']/i);
+    const url = href ? normalizarLink(href[1], base) : null;
+    if (!href || !url) return [];
+    const titulo = valorDaClasse(bloco, 'cargo') || textoDaPagina(bloco.match(/<h[23]\b[^>]*>([\s\S]*?)<\/h[23]>/i)?.[1] ?? '');
+    const texto = textoDaPagina(bloco).slice(0, 3000);
+    if (!titulo) return [];
+    return [{ idExterno: href[2], titulo, empresa, url, localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+}
+
+export function extrairVagasNerdin(html: string, empresa: string, base: string): VagaColetada[] {
+  const inicios = [...html.matchAll(/<div\b(?=[^>]*class=["'][^"']*\bvaga-card\b)(?=[^>]*data-href=)[^>]*>/gi)];
+  if (!inicios.length) throw new Error('Listagem da Nerdin não encontrada no formato esperado.');
+  if (inicios.length > 100) throw new Error('Listagem da Nerdin excedeu 100 anúncios.');
+  return inicios.flatMap((inicio, indice) => {
+    const limite = inicios[indice + 1]?.index ?? inicio.index! + 12000;
+    const bloco = html.slice(inicio.index! + inicio[0].length, limite);
+    const href = valoresAtributo(inicio[0], 'data-href');
+    const url = href ? normalizarLink(href, base) : null;
+    const titulo = valorDaClasse(bloco, 'vaga-titulo');
+    if (!href || !url || !titulo) return [];
+    const id = href.match(/(\d+)(?:\.php)?(?:[?#]|$)/)?.[1] ?? url;
+    const texto = textoDaPagina(bloco).slice(0, 3000);
+    return [{ idExterno: id, titulo, empresa: valorDaClasse(bloco, 'vaga-empresa-nome') || empresa,
+      url, localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+}
+
+export function extrairVagasGeekHunter(html: string, empresa: string, base: string): VagaColetada[] {
+  const scripts = [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const vagas = new Map<string, VagaColetada>();
+  for (const script of scripts) {
+    let json: unknown;
+    try { json = JSON.parse(script[1]); } catch { continue; }
+    const listas: unknown[] = Array.isArray(json) ? json : [json];
+    for (const lista of listas) {
+      if (!lista || typeof lista !== 'object') continue;
+      const item = lista as { '@type'?: unknown; itemListElement?: unknown };
+      if (item['@type'] !== 'ItemList' || !Array.isArray(item.itemListElement)) continue;
+      for (const entrada of item.itemListElement.slice(0, 100)) {
+        if (!entrada || typeof entrada !== 'object') continue;
+        const elemento = entrada as { url?: unknown; name?: unknown; item?: { url?: unknown; name?: unknown } };
+        const linkBruto = String(elemento.url ?? elemento.item?.url ?? '');
+        const url = normalizarLink(linkBruto, base);
+        const titulo = String(elemento.name ?? elemento.item?.name ?? '').trim();
+        if (!url || !titulo) continue;
+        const chave = new URL(url).pathname;
+        const posicao = html.indexOf(linkBruto);
+        const texto = posicao >= 0 ? textoDaPagina(html.slice(Math.max(0, posicao - 1800), posicao + 2400)).slice(0, 3000) : titulo;
+        vagas.set(chave, { idExterno: chave, titulo, empresa, url, localidade: texto, descricao: texto });
+      }
+    }
+  }
+  if (!vagas.size) throw new Error('Listagem GeekHunter não encontrada no formato esperado.');
+  return [...vagas.values()];
+}
+
+export function extrairVagasVagasCom(html: string, empresa: string, base: string): VagaColetada[] {
+  const blocos = html.split(/<li\b[^>]*class=["'][^"']*\bvaga\b[^"']*["'][^>]*>/i).slice(1);
+  if (!blocos.length) throw new Error('Listagem do Vagas.com não encontrada no formato esperado.');
+  if (blocos.length > 100) throw new Error('Listagem do Vagas.com excedeu 100 anúncios.');
+  return blocos.flatMap((bloco) => {
+    const link = bloco.match(/<a\b[^>]*class=["'][^"']*link-detalhes-vaga[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    const url = link ? normalizarLink(link[1], base) : null;
+    const titulo = link ? textoDaPagina(link[2]) || decodificarAtributo(valoresAtributo(link[0], 'title') ?? '') : '';
+    const id = valoresAtributo(link?.[0] ?? '', 'data-id-vaga') ?? url?.match(/v(\d+)/)?.[1] ?? '';
+    if (!url || !titulo || !id) return [];
+    const texto = textoDaPagina(bloco).slice(0, 3000);
+    return [{ idExterno: id, titulo, empresa: valorDaClasse(bloco, 'emprVaga') || empresa,
+      url, localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+}
+
+export function extrairVagasNttData(resultado: unknown, empresa: string, base: string): VagaColetada[] {
+  const dados = resultado as { success?: boolean; errors?: { message?: string }; result?: Array<{ selector?: string; results?: Array<{ html?: string; text?: string }> }> };
+  if (!dados.success) throw new Error(`Browser Run da Cloudflare: ${dados.errors?.message ?? 'falha ao renderizar a página da NTT DATA.'}`);
+  const conteudo = dados.result?.find((item) => item.selector === '#jobsignal-todos-resultados')?.results?.[0]?.text;
+  let linhas: Array<{ html?: string; text?: string }> = [];
+  if (conteudo) {
+    try {
+      const json: unknown = JSON.parse(conteudo);
+      if (Array.isArray(json)) linhas = json.filter((linha): linha is { html?: string; text?: string } => !!linha && typeof linha === 'object');
+    } catch { throw new Error('A paginação renderizada pela NTT DATA retornou dados inválidos.'); }
+  }
+  if (!linhas.length) linhas = dados.result?.find((item) => item.selector === '#tableData tbody tr')?.results ?? [];
+  if (!linhas.length) throw new Error('A NTT DATA não retornou linhas; o portal pode estar indisponível ou ter alterado o layout.');
+  const vagas = linhas.flatMap((linha) => {
+    const hrefs = [...String(linha.html ?? '').matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const link = hrefs.find((item) => /\/s\/(?:offer|job)\//i.test(item[1])) ?? hrefs[0];
+    const url = link ? normalizarLink(link[1], base) : null;
+    const titulo = link ? textoDaPagina(link[2]) : String(linha.text ?? '').split(/\n/)[0]?.trim() ?? '';
+    if (!url || !titulo) return [];
+    const texto = textoDaPagina(String(linha.text ?? '')).slice(0, 3000);
+    const id = new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? titulo;
+    return [{ idExterno: id, titulo, empresa, url, localidade: `${texto} · Brasil`, descricao: texto }];
+  });
+  if (!vagas.length) throw new Error('Linhas da NTT DATA foram carregadas, mas não foi possível extrair os anúncios.');
+  return vagas;
+}
+
 export function extrairListagemRecrut(html: string, base: string): ResumoVaga[] {
   const vagas = new Map<string, ResumoVaga>();
   const padrao = /<a\b[^>]*href=["']([^"']*?job\/([A-Z0-9]{4,20}))["'][^>]*>([\s\S]*?)<\/a>/gi;

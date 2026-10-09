@@ -96,7 +96,7 @@ O comando de publicação executa o build Angular e publica o Worker e os arquiv
 
 ## 🔗 Fontes de vagas
 
-Cadastre a **página com a listagem das vagas**, como uma página de carreiras. Há integrações para **Greenhouse**, **Lever**, **Recrut.ai**, **CI&T**, **CWI** e listagens públicas da **Remotar**. As fontes reconhecidas anteriormente são identificadas novamente na próxima carga do painel ou busca. O portal EMEAL da NTT DATA carrega vagas dinamicamente; embora a listagem pública tenha sido confirmada no navegador, o Worker ainda não tem uma rota de dados validada para consultá-la, então ela e outros endereços não reconhecidos continuam pendentes.
+Cadastre a **página com a listagem das vagas**, como uma página de carreiras. O JobSignal reconhece **Greenhouse**, **Lever**, **Recrut.ai**, **CI&T**, **CWI**, **Remotar**, **Gupy**, **InfoJobs**, **Catho**, **APInfo**, **Nerdin**, **GeekHunter**, **Vagas.com** e o portal EMEAL da **NTT DATA**. As fontes reconhecidas anteriormente são identificadas novamente na próxima carga do painel ou busca. A APInfo é consultada com o filtro público de Home Office; a NTT DATA é lida pela página renderizada do portal.
 
 Os dados exibidos vêm das fontes públicas cadastradas. Cada plataforma tem um adaptador limitado à forma atual da página ou API; alterações feitas pelos sites podem interromper a leitura e aparecerão como erro no histórico. A candidatura continua manual no endereço original da vaga.
 
