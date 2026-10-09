@@ -4,7 +4,7 @@ import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fonte
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasApinfo,
   extrairVagasCatho, extrairVagasCiandt, extrairVagasGeekHunter, extrairVagasGupy,
-  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom, reconstruirHtmlRaspado,
+  extrairPaginaNttData, extrairVagasInfojobs, extrairVagasNerdin, extrairVagasVagasCom, reconstruirHtmlRaspado,
   textoDaPagina
 } from './fontes-html.ts';
 
@@ -16,7 +16,9 @@ test('identifica as fontes cadastradas do JobSignal', () => {
   assert.equal(identificarOrigem('https://cwi.com.br/talentos/oportunidades/').plataforma, 'cwi');
   assert.equal(identificarOrigem('https://remotar.com.br/company/303/confitec').identificador, '303');
   assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs?language=pt_BR').plataforma, 'nttdata');
-  assert.equal(identificarOrigem('https://careers.nttdata.com/br/pt/search-results').plataforma, 'pendente');
+  assert.equal(identificarOrigem('https://careers.nttdata.com/br/pt/search-results').plataforma, 'nttdata');
+  assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs').url,
+    'https://careers.nttdata.com/br/pt/search-results?qcountry=Brazil');
   assert.equal(identificarOrigem('https://portal.gupy.io/job-search/term=TI').plataforma, 'gupy');
   assert.equal(identificarOrigem('https://www.infojobs.com.br/vagas-de-ti.aspx').plataforma, 'infojobs');
   assert.equal(identificarOrigem('https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/').plataforma, 'catho');
@@ -141,52 +143,43 @@ test('consulta Catho com agente identificado e lê vagas sem usar Browser Run', 
   }
 });
 
-test('normaliza as linhas renderizadas no portal público da NTT DATA', () => {
-  const resposta = { success: true, result: [
-    { selector: '#tableData tbody tr', results: [{
-      html: '<td><a href="/s/offer/123">Pessoa Desenvolvedora Java</a></td><td>Teletrabalho</td><td>Brasil</td>',
-      text: 'Pessoa Desenvolvedora Java\nTeletrabalho\nBrasil'
-    }] },
-    { selector: '#tableData_info', results: [{ text: 'Showing 1 to 3 of 35 entries' }] }
-  ] };
-  const [vaga] = extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs?language=pt_BR&pcountry=Brasil');
-  assert.equal(vaga?.idExterno, '123');
-  assert.match(vaga?.localidade ?? '', /Teletrabalho/);
-  assert.match(vaga?.localidade ?? '', /Brasil/);
+function paginaNttData(total: number, vagas: Array<Record<string, unknown>>): string {
+  return `<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { totalHits: total, data: { jobs: vagas } } })};phApp.experimentData = {};</script>`;
+}
+
+test('lê os dados públicos da NTT DATA e usa o link oficial da vaga', () => {
+  const pagina = paginaNttData(1, [{ jobId: 'abc12345', title: 'Pessoa Analista Júnior', country: 'Brazil',
+    location: 'São Paulo, Brazil', remoteType: 'Remote', descriptionTeaser: 'Início de carreira em tecnologia.',
+    postedDate: '2026-10-08T12:00:00-03:00' }]);
+  const resultado = extrairPaginaNttData(pagina, 'NTT DATA');
+  assert.equal(resultado.total, 1);
+  assert.equal(resultado.vagas[0]?.url, 'https://careers.nttdata.com/br/pt/job/abc12345');
+  assert.match(resultado.vagas[0]?.localidade ?? '', /Remote/);
+  assert.equal(resultado.vagas[0]?.publicadaEm, '2026-10-08T15:00:00.000Z');
 });
 
-test('aceita o formato de coleta paginada e links alternativos da NTT DATA', () => {
-  const resposta = { success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
-    text: JSON.stringify({ linhas: [{
-      html: '<tr><td><a href="/s/job/456">Pessoa Analista Júnior</a></td></tr>',
-      text: 'Pessoa Analista Júnior\nRemoto'
-    }], totalLinhasTabela: 1, exemplosLinks: ['/s/job/456'] })
-  }] }] };
-  const [vaga] = extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs');
-  assert.equal(vaga?.idExterno, '456');
-  assert.equal(vaga?.titulo, 'Pessoa Analista Júnior');
+test('consulta todas as páginas brasileiras da NTT DATA sem Browser Run', async () => {
+  const enderecos: string[] = [];
+  const fetchAnterior = globalThis.fetch;
+  globalThis.fetch = (async (entrada: RequestInfo | URL) => {
+    const url = new URL(entrada instanceof Request ? entrada.url : String(entrada));
+    enderecos.push(url.toString());
+    const deslocamento = Number(url.searchParams.get('from') ?? 0);
+    const vagas = Array.from({ length: deslocamento ? 2 : 10 }, (_, indice) => ({
+      jobId: `vaga${deslocamento + indice}`, title: 'Analista Júnior', country: 'Brazil', location: 'Brazil'
+    }));
+    return new Response(paginaNttData(12, vagas), { headers: { 'Content-Type': 'text/html' } });
+  }) as typeof fetch;
+  try {
+    const vagas = await coletarVagas(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs'), 'NTT DATA');
+    assert.equal(vagas.length, 12);
+    assert.deepEqual(enderecos.map((endereco) => new URL(endereco).searchParams.get('from')), [null, '10']);
+    assert.ok(enderecos.every((endereco) => new URL(endereco).searchParams.get('qcountry') === 'Brazil'));
+  } finally { globalThis.fetch = fetchAnterior; }
 });
 
-test('o Browser Run da NTT DATA espera links de vagas antes de coletar', async () => {
-  let roteiro = '';
-  const navegador = { async quickAction(_acao: string, opcoes: { addScriptTag?: Array<{ content: string }> }) {
-    roteiro = opcoes.addScriptTag?.[0]?.content ?? '';
-    return new Response(JSON.stringify({ success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
-      text: JSON.stringify({ linhas: [{ html: '<a href="/s/job/456">Vaga Júnior</a>', text: 'Vaga Júnior' }] })
-    }] }] }), { headers: { 'Content-Type': 'application/json' } });
-  } } as unknown as BrowserRun;
-  const vagas = await coletarVagas(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs'), 'NTT DATA', navegador, async () => {});
-  assert.doesNotThrow(() => new Function(roteiro));
-  assert.match(roteiro, /querySelector\(seletorVaga\)/);
-  assert.match(roteiro, /\/s\/job\//);
-  assert.equal(vagas[0]?.idExterno, '456');
-});
-
-test('explica quando a tabela da NTT DATA carrega sem anúncios', () => {
-  const resposta = { success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
-    text: JSON.stringify({ linhas: [], totalLinhasTabela: 1, exemplosLinks: [] })
-  }] }] };
-  assert.throws(() => extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs'),
-    /Linhas na tabela: 1\. Links encontrados: nenhum/);
+test('interrompe a coleta da NTT DATA se o filtro brasileiro não for respeitado', () => {
+  const pagina = paginaNttData(1, [{ jobId: 'abc12345', title: 'Vaga', country: 'Germany' }]);
+  assert.throws(() => extrairPaginaNttData(pagina, 'NTT DATA'), /fora do Brasil/);
 });
 

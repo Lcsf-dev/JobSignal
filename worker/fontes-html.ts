@@ -199,38 +199,36 @@ export function extrairVagasVagasCom(html: string, empresa: string, base: string
   });
 }
 
-export function extrairVagasNttData(resultado: unknown, empresa: string, base: string): VagaColetada[] {
-  const dados = resultado as { success?: boolean; errors?: { message?: string }; result?: Array<{ selector?: string; results?: Array<{ html?: string; text?: string }> }> };
-  if (!dados.success) throw new Error(`Browser Run da Cloudflare: ${dados.errors?.message ?? 'falha ao renderizar a página da NTT DATA.'}`);
-  const conteudo = dados.result?.find((item) => item.selector === '#jobsignal-todos-resultados')?.results?.[0]?.text;
-  let linhas: Array<{ html?: string; text?: string }> = [];
-  let diagnostico = '';
-  if (conteudo) {
-    try {
-      const json: unknown = JSON.parse(conteudo);
-      if (Array.isArray(json)) linhas = json.filter((linha): linha is { html?: string; text?: string } => !!linha && typeof linha === 'object');
-      else if (json && typeof json === 'object') {
-        const coleta = json as { linhas?: unknown; totalLinhasTabela?: unknown; exemplosLinks?: unknown };
-        if (Array.isArray(coleta.linhas)) linhas = coleta.linhas.filter((linha): linha is { html?: string; text?: string } => !!linha && typeof linha === 'object');
-        const exemplos = Array.isArray(coleta.exemplosLinks) ? coleta.exemplosLinks.filter((link): link is string => typeof link === 'string').slice(0, 3) : [];
-        diagnostico = ` Linhas na tabela: ${Number(coleta.totalLinhasTabela) || 0}. Links encontrados: ${exemplos.join(', ') || 'nenhum'}.`;
-      }
-    } catch { throw new Error('A paginação renderizada pela NTT DATA retornou dados inválidos.'); }
+export function extrairPaginaNttData(html: string, empresa: string): { total: number; quantidade: number; vagas: VagaColetada[] } {
+  const conteudo = html.match(/phApp\.ddo\s*=\s*(\{[\s\S]*?\});\s*phApp\.experimentData/)?.[1];
+  if (!conteudo) throw new Error('Dados de vagas da NTT DATA não encontrados na página oficial.');
+  let dados: unknown;
+  try { dados = JSON.parse(conteudo); }
+  catch { throw new Error('Dados de vagas da NTT DATA estão em formato inválido.'); }
+  const busca = (dados as { eagerLoadRefineSearch?: { totalHits?: unknown; data?: { jobs?: unknown } } })?.eagerLoadRefineSearch;
+  if (!Number.isInteger(busca?.totalHits) || Number(busca?.totalHits) < 0 || !Array.isArray(busca?.data?.jobs)) {
+    throw new Error('Listagem da NTT DATA não encontrada no formato esperado.');
   }
-  if (!linhas.length) linhas = dados.result?.find((item) => item.selector === '#tableData tbody tr')?.results ?? [];
-  if (!linhas.length) throw new Error(`A NTT DATA não retornou anúncios; o portal pode estar indisponível ou ter alterado o layout.${diagnostico}`);
-  const vagas = linhas.flatMap((linha) => {
-    const hrefs = [...String(linha.html ?? '').matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
-    const link = hrefs.find((item) => /\/s\/(?:offer|job)\//i.test(item[1])) ?? hrefs[0];
-    const url = link ? normalizarLink(link[1], base) : null;
-    const titulo = link ? textoDaPagina(link[2]) : String(linha.text ?? '').split(/\n/)[0]?.trim() ?? '';
-    if (!url || !titulo) return [];
-    const texto = textoDaPagina(String(linha.text ?? '')).slice(0, 3000);
-    const id = new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? titulo;
-    return [{ idExterno: id, titulo, empresa, url, localidade: `${texto} · Brasil`, descricao: texto }];
+  const itens = busca.data.jobs as Array<Record<string, unknown>>;
+  const vagas = itens.map((item) => {
+    const id = item?.jobId;
+    const titulo = item?.title;
+    if (item?.country !== 'Brazil' || typeof id !== 'string' || !/^[a-z\d-]{4,80}$/i.test(id)
+      || typeof titulo !== 'string' || !titulo.trim()) {
+      throw new Error('A NTT DATA retornou uma vaga fora do Brasil ou com dados incompletos.');
+    }
+    const publicadaEm = typeof item.postedDate === 'string' && Number.isFinite(Date.parse(item.postedDate))
+      ? new Date(item.postedDate).toISOString() : undefined;
+    const localidades = Array.isArray(item.multi_location) ? item.multi_location.filter((local): local is string => typeof local === 'string') : [];
+    const localidade = [...new Set([item.remoteType, item.location, ...localidades]
+      .filter((local): local is string => typeof local === 'string' && !!local.trim()))].join(' · ').slice(0, 1000);
+    const descricao = [item.descriptionTeaser, item.category]
+      .filter((parte): parte is string => typeof parte === 'string' && !!parte.trim()).join(' · ').slice(0, 3000);
+    return { idExterno: id, titulo: titulo.trim(), empresa,
+      url: `https://careers.nttdata.com/br/pt/job/${encodeURIComponent(id)}`,
+      localidade, descricao, publicadaEm };
   });
-  if (!vagas.length) throw new Error('Linhas da NTT DATA foram carregadas, mas não foi possível extrair os anúncios.');
-  return vagas;
+  return { total: Number(busca.totalHits), quantidade: itens.length, vagas };
 }
 
 export function extrairListagemRecrut(html: string, base: string): ResumoVaga[] {

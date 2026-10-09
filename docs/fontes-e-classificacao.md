@@ -11,7 +11,7 @@ Greenhouse e Lever usam as APIs públicas das plataformas. A página de carreira
 
 A Catho é consultada primeiro pela listagem HTML pública e usa o Browser Run como alternativa quando a página não pode ser lida diretamente. A APInfo usa o Browser Run para aplicar Home Office e coletar os cartões exibidos. As chamadas do Browser Run são espaçadas por um limitador persistido no D1 do JobSignal para evitar concorrência entre as fontes deste projeto.
 
-O endereço `careers.emeal.nttdata.com/s/jobs` é o portal EMEAL da NTT DATA e carrega resultados dinamicamente no navegador. O JobSignal usa o Browser Run da Cloudflare para renderizar a tabela e percorrer as páginas de resultados; o endereço público foi testado e exibiu vagas do Brasil. O domínio `careers.nttdata.com` é outro portal, de outra plataforma, e não deve ser confundido com o EMEAL. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo; bloqueios e mudanças dos próprios sites são registrados como falha da fonte.
+O portal antigo `careers.emeal.nttdata.com/s/jobs` passou a mostrar uma tabela vazia. O JobSignal consulta `careers.nttdata.com/br/pt/search-results?qcountry=Brazil`, que publica os dados da busca no HTML. A coleta percorre as páginas com o parâmetro `from` e aceita tanto o endereço antigo cadastrado quanto o novo, sempre usando o filtro de país Brasil. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo; bloqueios e mudanças dos próprios sites são registrados como falha da fonte.
 
 ## 🎯 Elegibilidade
 

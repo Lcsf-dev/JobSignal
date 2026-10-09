@@ -2,7 +2,7 @@ import type { VagaColetada } from './classificador';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut,
   extrairVagasApinfo, extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
-  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom,
+  extrairPaginaNttData, extrairVagasInfojobs, extrairVagasNerdin, extrairVagasVagasCom,
   reconstruirHtmlRaspado, textoDaPagina
 } from './fontes-html.ts';
 
@@ -47,7 +47,10 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
   if (['www.nerdin.com.br', 'nerdin.com.br'].includes(host) && /^\/vagas\.php$/i.test(url.pathname)) return { plataforma: 'nerdin', identificador: null, url: url.toString() };
   if (['www.geekhunter.com', 'geekhunter.com'].includes(host) && /^\/pt\/vagas\/?$/i.test(url.pathname)) return { plataforma: 'geekhunter', identificador: null, url: url.toString() };
   if (['www.vagas.com.br', 'vagas.com.br'].includes(host) && /^\/vagas(?:-|\/)/i.test(url.pathname)) return { plataforma: 'vagas', identificador: null, url: url.toString() };
-  if (host === 'careers.emeal.nttdata.com' && /^\/s\/jobs\/?$/i.test(url.pathname)) return { plataforma: 'nttdata', identificador: 'emeal', url: url.toString() };
+  if ((host === 'careers.emeal.nttdata.com' && /^\/s\/jobs\/?$/i.test(url.pathname))
+    || (host === 'careers.nttdata.com' && /^\/br\/pt\/search-results\/?$/i.test(url.pathname))) {
+    return { plataforma: 'nttdata', identificador: 'phenom', url: 'https://careers.nttdata.com/br/pt/search-results?qcountry=Brazil' };
+  }
   return { plataforma: 'pendente', identificador: null, url: url.toString() };
 }
 
@@ -189,65 +192,20 @@ export async function coletarVagas(
   reservarBrowserRun?: ReservarBrowserRun
 ): Promise<VagaColetada[]> {
   if (origem.plataforma === 'nttdata') {
-    if (!browser) throw new Error('Serviço Browser Run indisponível para renderizar o portal da NTT DATA.');
-    if (!reservarBrowserRun) throw new Error('Limitador de chamadas do Browser Run indisponível.');
-    await reservarBrowserRun();
-    const coletarPaginas = `(async () => {
-      const seletorVaga = "a[href*='/s/offer/'], a[href*='/s/job/']";
-      for (let espera = 0; espera < 80 && !document.querySelector("#tableData")?.querySelector(seletorVaga); espera++) {
-        await new Promise((resolver) => setTimeout(resolver, 250));
-      }
-      const tabela = document.querySelector("#tableData");
-      if (!tabela) return;
-      const anuncios = new Map();
-      const coletarLinhas = () => {
-        for (const linha of tabela.querySelectorAll("tbody tr")) {
-          const link = linha.querySelector(seletorVaga);
-          if (link) anuncios.set(link.href, { html: linha.outerHTML, text: linha.innerText });
-        }
-      };
-      for (let pagina = 0; pagina < 20; pagina++) {
-        coletarLinhas();
-        const atual = document.querySelector("#tableData_paginate .current")?.textContent?.trim() || "1";
-        const assinaturaAnterior = [...tabela.querySelectorAll(seletorVaga)].map((item) => item.href).join("|");
-        const proximo = document.querySelector("#tableData_next");
-        if (proximo?.classList.contains("disabled")) break;
-        if (proximo) proximo.click();
-        else {
-          const linkPagina = [...document.querySelectorAll("#tableData_paginate a")].find((item) => item.textContent?.trim() === String(Number(atual) + 1));
-          if (!linkPagina) break;
-          linkPagina.click();
-        }
-        let paginaMudou = false;
-        for (let espera = 0; espera < 40; espera++) {
-          await new Promise((resolver) => setTimeout(resolver, 250));
-          const assinaturaAtual = [...tabela.querySelectorAll(seletorVaga)].map((item) => item.href).join("|");
-          if (assinaturaAtual && assinaturaAtual !== assinaturaAnterior) { paginaMudou = true; break; }
-        }
-        if (!paginaMudou) break;
-      }
-      coletarLinhas();
-      const saida = document.createElement("pre");
-      saida.id = "jobsignal-todos-resultados";
-      saida.textContent = JSON.stringify({
-        linhas: [...anuncios.values()],
-        totalLinhasTabela: tabela.querySelectorAll("tbody tr").length,
-        exemplosLinks: [...tabela.querySelectorAll("tbody tr a[href]")].slice(0, 3).map((link) => link.getAttribute("href"))
-      });
-      document.body.appendChild(saida);
-    })();`;
-    const resposta = await browser.quickAction('scrape', {
-      url: origem.url,
-      addScriptTag: [{ content: coletarPaginas }],
-      waitForSelector: { selector: '#jobsignal-todos-resultados', timeout: 55000 },
-      gotoOptions: { waitUntil: 'networkidle2', timeout: 45000 },
-      elements: [{ selector: '#jobsignal-todos-resultados' }]
-    });
-    if (!resposta.ok) {
-      const detalhe = await resposta.text();
-      throw new Error(`Browser Run da Cloudflare respondeu HTTP ${resposta.status}${detalhe ? `: ${detalhe.slice(0, 250)}` : '.'}`);
+    const endereco = new URL('https://careers.nttdata.com/br/pt/search-results');
+    endereco.searchParams.set('qcountry', 'Brazil');
+    const vagas: VagaColetada[] = [];
+    let total = 1;
+    while (vagas.length < total) {
+      if (vagas.length) endereco.searchParams.set('from', String(vagas.length));
+      const pagina = extrairPaginaNttData(await obterTexto(endereco.toString(), 'html'), empresa);
+      if (pagina.total > 500) throw new Error('A NTT DATA excedeu 500 anúncios; a consulta foi interrompida com segurança.');
+      if (pagina.total < vagas.length) throw new Error('A paginação da NTT DATA mudou durante a consulta.');
+      total = pagina.total;
+      if (!pagina.quantidade && vagas.length < total) throw new Error('A NTT DATA retornou uma página vazia antes do fim da listagem.');
+      vagas.push(...pagina.vagas);
     }
-    return extrairVagasNttData(await resposta.json(), empresa, origem.url);
+    return vagas;
   }
   if (origem.plataforma === 'apinfo') {
     if (!browser) throw new Error('Serviço Browser Run indisponível para consultar a APInfo.');
