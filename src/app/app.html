@@ -84,7 +84,7 @@
       <footer class="credito-sistema">
         <span>Desenvolvido por Lucas Fernandes</span>
         <span aria-hidden="true">·</span>
-        <a href="mailto:lucas.lcsf.dev@gmail.com">Contato: lucas.lcsf.dev@gmail.com</a>
+        <a href="https://mail.google.com/mail/?view=cm&amp;fs=1&amp;to=lucas.lcsf.dev%40gmail.com" target="_blank" rel="noopener noreferrer" title="Abrir o Gmail para escrever a Lucas Fernandes"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2" /><path d="m3.5 6 8.5 6.5L20.5 6" /></svg><span>Contato: lucas.lcsf.dev@gmail.com</span></a>
       </footer>
     </div>
     <nav class="mobile-nav" aria-label="Navegação móvel">@for (item of menu; track item.id) { <button type="button" [class.ativo]="aba() === item.id" (click)="mudarAba(item.id)"><span>{{ item.icone }}</span><small>{{ item.nomeMobile ?? item.nome }}</small></button> }</nav>

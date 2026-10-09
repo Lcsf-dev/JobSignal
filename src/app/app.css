@@ -14,5 +14,5 @@
 @media(max-width:760px){.mobile-nav{overflow-x:auto}.mobile-nav button{flex:0 0 72px}}
 
 .restauracao-silenciosa{min-height:100vh;background:#f5f8fc}.chip.afirmativa{background:#e9f6f3;color:#137967}.subtitulo-opcoes{margin:23px 0 5px;font-size:1rem}
-.credito-sistema{max-width:1450px;margin:0 auto;padding:0 clamp(20px,4vw,54px) 28px;display:flex;justify-content:center;align-items:center;gap:7px;flex-wrap:wrap;text-align:center;color:#73849a;font-size:.78rem}.credito-sistema a{color:#075acb;text-decoration:underline;text-underline-offset:3px}.credito-sistema a:hover{color:#003f98}
+.credito-sistema{max-width:1450px;margin:0 auto;padding:0 clamp(20px,4vw,54px) 28px;display:flex;justify-content:center;align-items:center;gap:7px;flex-wrap:wrap;text-align:center;color:#73849a;font-size:.78rem}.credito-sistema a{display:inline-flex;align-items:center;gap:5px;color:#075acb;text-decoration:underline;text-underline-offset:3px}.credito-sistema a:hover{color:#003f98}.credito-sistema svg{width:15px;height:15px;flex:none}
 @media(max-width:760px){.credito-sistema{padding:0 16px calc(92px + env(safe-area-inset-bottom))}}
