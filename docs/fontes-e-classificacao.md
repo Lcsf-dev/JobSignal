@@ -7,7 +7,7 @@ Informe o nome da empresa e a URL da **página que lista suas vagas**. Exemplos 
 - `https://jobs.lever.co/empresa`
 - `https://job-boards.greenhouse.io/empresa`
 
-Esses endereços são exemplos de formato, não fontes reais configuradas no sistema. O adaptador identifica a plataforma e usa sua API pública. Uma URL fora das plataformas suportadas permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo.
+Greenhouse e Lever usam as APIs públicas das plataformas. Também há adaptadores para Recrut.ai, CI&T, CWI e listagens públicas da Remotar. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo.
 
 ## 🎯 Elegibilidade
 
@@ -25,4 +25,4 @@ As vagas pendentes não são apresentadas como elegíveis. A análise automátic
 
 ## 🧩 Ampliar integrações
 
-Cada nova plataforma deve ter um adaptador próprio em `worker/fontes.ts`. Valide a URL, use APIs oficiais quando disponíveis, limite o tamanho da resposta e normalize identificador, título, empresa, link e localização. Fontes com muitos resultados precisam de paginação antes de serem habilitadas. Mantenha consultas sem autenticação indevida e respeite respostas de erro das plataformas.
+Cada nova plataforma deve ter um adaptador próprio em `worker/fontes.ts`. Valide a URL, use APIs públicas quando disponíveis, limite o tamanho da resposta e normalize identificador, título, empresa, link e localização. Fontes com muitos resultados precisam de paginação antes de serem habilitadas. Mantenha consultas sem autenticação indevida e respeite respostas de erro das plataformas. As páginas públicas podem mudar; confira erros e resultados no histórico antes de confiar numa nova integração.
