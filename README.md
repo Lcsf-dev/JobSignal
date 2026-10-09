@@ -1,145 +1,77 @@
 # JobSignal
 
-Monitor pessoal de vagas de TI. O JobSignal reúne páginas de carreira cadastradas manualmente, consulta fontes compatíveis duas vezes ao dia e organiza vagas de estágio, trainee, júnior e analista júnior. Uma vaga só é apresentada como elegível quando há indícios suficientes de trabalho remoto para quem reside no Brasil.
+Aplicação pessoal para acompanhar vagas de tecnologia em estágio, trainee, júnior e analista júnior. O JobSignal consulta fontes de emprego cadastradas, classifica anúncios com critérios conservadores e reúne os resultados em um painel. A candidatura é feita no anúncio original.
 
-O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron Triggers** na aplicação. O código pode ser versionado no GitHub; build e publicação podem ser executados diretamente do computador, sem GitHub Actions.
+## Funcionalidades
 
-## 🖥️ Prévia da interface
+- **Coleta:** buscas manuais e automáticas em fontes compatíveis, com histórico de execução e falhas por fonte.
+- **Classificação:** uma vaga só é elegível quando o anúncio traz evidências de atuação em TI, modalidade remota e disponibilidade para residentes no Brasil. Casos sem confirmação ficam pendentes de verificação.
+- **Acompanhamento:** em vagas elegíveis, selecione um estado e confirme em **OK**. **Nova** e **Tenho interesse** continuam no painel. **Me candidatei** e **Descartada por mim** vão para o **Histórico de vagas**, com opção de restauração.
+- **Notificações:** ao concluir uma busca, o sistema pode enviar um único resumo com os links de todas as vagas elegíveis ainda não notificadas. Vagas já enviadas não entram novamente no resumo.
+- **Acesso:** API protegida por chave pessoal, sem cadastro público de usuários.
 
-![Painel inicial do JobSignal](docs/screenshots/painel-jobsignal.png)
+## Arquitetura
 
-## ✨ Funcionalidades
+| Camada | Tecnologia | Responsabilidade |
+| --- | --- | --- |
+| Interface | Angular | Painel, filtros, histórico e ajustes |
+| Aplicação | Cloudflare Workers | API, coleta, classificação e envio de notificações |
+| Persistência | Cloudflare D1 | Configurações, fontes, vagas, execuções e histórico |
+| Processamento | Cloudflare Queues e Cron Triggers | Buscas em segundo plano e agendamento |
+| Arquivos estáticos | Cloudflare Workers Assets | Interface compilada |
 
-- 🧭 **Painel:** resumo das fontes, vagas elegíveis, pendências e próxima busca.
-- 🔗 **Sites monitorados:** cadastro, edição, pausa e exclusão lógica de páginas de vagas.
-- 🔎 **Busca automática e manual:** duas buscas diárias configuráveis e início manual a qualquer hora, com andamento acompanhado no painel.
-- 🎯 **Tipos de vaga:** estágio, trainee, júnior e analista júnior, selecionáveis individualmente; variações como “Junior”, “Jr.” e “Estagiária” são reconhecidas.
-- 🌎 **Regra fixa:** somente oportunidades de TI, remotas e disponíveis para residentes no Brasil podem ser elegíveis.
-- 🗂️ **Vagas:** separação entre elegíveis e pendentes de verificação. Na lista de elegíveis, escolha o acompanhamento e clique em **OK**: **Nova** e **Tenho interesse** permanecem na lista; **Me candidatei** e **Descartada por mim** vão para o Histórico de vagas, de onde podem ser restauradas.
-- 📈 **Histórico:** registro das buscas e de falhas por fonte, separado do Histórico de vagas.
-- ✉️ **Avisos por e-mail:** remetente e destinatário editáveis; alertas com link original quando uma busca termina com vagas elegíveis.
-- 🔐 **Acesso pessoal:** a API exige uma chave configurada como segredo do Worker. Não há cadastro público.
+`src/` contém a interface; `worker/` contém a API e os adaptadores de coleta; `migrations/` guarda a evolução versionada do D1; `public/` contém os arquivos estáticos. As regras e limitações das integrações estão em [Fontes e classificação](docs/fontes-e-classificacao.md).
 
-## 🧱 Organização
+## Desenvolvimento local
 
-```text
-JobSignal/
-├── src/                    Interface Angular responsiva
-│   └── app/                Telas e interação com a API
-├── worker/                 API, agendamento, coleta e classificação
-│   ├── index.ts            Rotas, execução e tarefas
-│   ├── fontes.ts           Integrações e identificação das fontes
-│   ├── fontes-html.ts      Leitura e normalização de listagens públicas
-│   ├── email.ts            Montagem e envio de alertas pelo Gmail API
-│   └── classificador.ts    Regras de elegibilidade
-├── migrations/             Evolução versionada do banco D1
-│   └── 0001_inicial.sql    Tabelas e índices iniciais
-│   └── 0002_buscas_email.sql  Campos de busca e aviso por e-mail
-│   └── 0003_data_publicacao.sql  Data informada pela fonte da vaga
-├── public/                 Imagens estáticas, incluindo a logo
-├── docs/                   Explicações técnicas e das fontes
-└── wrangler.jsonc          Configuração dos recursos Cloudflare
-```
+**Pré-requisitos:** Node.js e npm compatíveis com as versões declaradas em `package.json`. Para usar recursos remotos, autentique o Wrangler na conta Cloudflare que contém o projeto.
 
-O banco `jobsignal-db` contém as tabelas de configuração, fontes, vagas, execuções e tarefas. O arquivo `0001_inicial.sql` cria a primeira versão dessas tabelas; **não é um segundo banco**.
+1. Instale as dependências:
 
-## 🛠️ Requisitos para desenvolvimento
+   ```powershell
+   npm ci
+   ```
 
-- Node.js e npm recentes.
-- Conta Cloudflare autenticada no Wrangler para operar recursos remotos.
-- Chave de acesso pessoal com pelo menos 24 caracteres.
+2. Copie `.dev.vars.example` para `.dev.vars` e configure `ACESSO_TOKEN` com uma chave aleatória de pelo menos 24 caracteres. `.dev.vars` é local e não deve ser versionado.
 
-Instale as dependências:
+3. Aplique as migrações locais, compile a interface e inicie o Worker:
 
-```powershell
-npm install
-```
+   ```powershell
+   npm run db:local
+   npm run build
+   npm run dev:worker
+   ```
 
-Copie `.dev.vars.example` para `.dev.vars` e substitua o valor de `ACESSO_TOKEN` por uma chave longa e aleatória. Esse arquivo é ignorado pelo Git e serve apenas ao desenvolvimento local.
+Abra o endereço informado pelo Wrangler e insira a chave configurada. O Worker local serve a interface compilada e a API na mesma origem. Depois de alterar a interface, execute `npm run build` novamente; `npm run start` inicia apenas o servidor de desenvolvimento do Angular.
 
-Crie as tabelas no banco local e compile a interface:
+## Fontes e critérios
 
-```powershell
-npm run db:local
-npm run build
-```
+Cadastre a página de listagem de vagas de uma fonte compatível. O projeto possui adaptadores para Greenhouse, Lever, Recrut.ai, CI&T, CWI, Remotar, Gupy, InfoJobs, Catho, APInfo, Nerdin, GeekHunter, Vagas.com e o portal de carreiras da NTT DATA.
 
-Inicie o Worker local, que serve a interface compilada e a API na mesma origem:
+Os adaptadores dependem dos formatos públicos disponibilizados por cada site. Mudanças nesses formatos ou bloqueios de acesso podem interromper a coleta; as falhas aparecem no histórico de buscas. Links sem integração reconhecida não são consultados automaticamente.
+
+## Notificações por e-mail
+
+Em **Ajustes**, configure remetente, destinatário e a opção de receber notificações. Para envio pelo Gmail, a conta remetente precisa ter verificação em duas etapas e uma senha de app. Salve essa senha no campo próprio da interface; não use a senha normal da conta. A senha de app é criptografada no D1 com uma chave mantida como segredo do Worker.
+
+O segredo `EMAIL_ENCRYPTION_KEY` deve conter **32 bytes codificados em Base64**. Em uma instalação nova, configure esse segredo antes de salvar a senha de app. Não altere uma chave já usada sem migrar a credencial criptografada.
+
+Ao término de cada busca, o JobSignal reúne as vagas elegíveis que ainda não foram notificadas em **uma mensagem com seus links**. Buscas manuais seguem a mesma regra. Vagas arquivadas ou já enviadas ficam fora do próximo resumo. Se a confirmação de entrega for incerta, a tentativa fica registrada para conferência antes de qualquer reenvio.
+
+O envio por OAuth 2.0 também é suportado quando os segredos `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` e `GMAIL_REFRESH_TOKEN` estão configurados. O botão **Enviar e-mail de teste** em Ajustes serve para verificar as credenciais e a entrega.
+
+## Publicação
+
+O `wrangler.jsonc` define Worker, banco D1, fila, recursos de limitação de taxa, arquivos estáticos e gatilho de agendamento. Em uma conta nova, provisionar o banco e a fila exige atualizar o identificador do D1 nesse arquivo. Na conta já configurada, aplique apenas as novas migrações antes de publicar:
 
 ```powershell
-npm run dev:worker
-```
-
-Abra o endereço exibido pelo Wrangler e informe a chave configurada em `.dev.vars`. O botão **Buscar agora** permite testar uma rodada manual. Para testar o agendamento local, use a rota de testes de eventos agendados fornecida pelo Wrangler.
-
-## ☁️ Recursos e publicação manual
-
-Os recursos usam estes nomes:
-
-| Recurso | Nome |
-|---|---|
-| Worker e interface | `jobsignal` |
-| Banco D1 | `jobsignal-db` |
-| Fila | `jobsignal-buscas` |
-
-Para preparar uma conta nova, crie o banco D1 e a fila com Wrangler e substitua no `wrangler.jsonc` o identificador do banco retornado pelo comando de criação. Na conta usada neste projeto, o banco e a fila já foram criados.
-
-```powershell
-npx wrangler d1 create jobsignal-db
-npx wrangler queues create jobsignal-buscas
 npm run db:remoto
-npx wrangler secret put ACESSO_TOKEN
 npm run publicar
 ```
 
-O comando de publicação executa o build Angular e publica o Worker e os arquivos estáticos juntos. **Não execute `d1 create` novamente na mesma conta**. Para atualizar a aplicação, rode somente `npm run publicar`; para novas alterações no banco, crie uma migração versionada e execute `npm run db:remoto` antes da publicação.
+`npm run publicar` compila o Angular e publica o Worker com seus arquivos estáticos. Cadastre `ACESSO_TOKEN` e `EMAIL_ENCRYPTION_KEY` como segredos do Worker com `npx wrangler secret put NOME_DO_SEGREDO`; nunca inclua valores reais no repositório.
 
-## 🔗 Fontes de vagas
-
-Cadastre a **página com a listagem das vagas**, como uma página de carreiras. O JobSignal reconhece **Greenhouse**, **Lever**, **Recrut.ai**, **CI&T**, **CWI**, **Remotar**, **Gupy**, **InfoJobs**, **Catho**, **APInfo**, **Nerdin**, **GeekHunter**, **Vagas.com** e o portal oficial de carreiras da **NTT DATA**. As fontes reconhecidas anteriormente são identificadas novamente na próxima carga do painel ou busca. A APInfo é consultada com o filtro público de Home Office; a NTT DATA é consultada com o filtro de país Brasil e paginação no portal atual.
-
-Os dados exibidos vêm das fontes públicas cadastradas. Cada plataforma tem um adaptador limitado à forma atual da página ou API; alterações feitas pelos sites podem interromper a leitura e aparecerão como erro no histórico. A candidatura continua manual no endereço original da vaga.
-
-## ✉️ Avisos por Gmail
-
-Os campos de remetente e destinatário ficam editáveis em **Ajustes**. Os valores iniciais são `yugi.lucas@gmail.com` e `lucas.lcsf.dev@gmail.com`. O remetente precisa ser a conta Google que gerou a senha de app ou um endereço permitido como alias dessa conta. Não é necessário comprar domínio nem usar Email Routing.
-
-O modo mais simples de envio usa SMTP do Gmail com uma **senha de app**. A verificação em duas etapas precisa estar ativa na conta remetente. A senha é criptografada antes de ser guardada no banco; a chave de criptografia fica somente como segredo do Worker:
-
-1. Na conta remetente, abra [Senhas de app do Google](https://myaccount.google.com/apppasswords) e crie uma senha para `JobSignal`.
-2. Em **Ajustes → Receber vagas por e-mail**, cole a senha no campo **Senha de app do Gmail** e clique em **Salvar senha de app**. Não use a senha normal da conta Google.
-3. Aguarde a próxima verificação: o JobSignal enviará um único resumo das vagas elegíveis ainda não notificadas. Use **Enviar e-mail de teste** apenas se precisar diagnosticar a entrega.
-
-O Gmail API OAuth 2.0 continua disponível como alternativa. Para ativá-lo sem senha de app:
-
-1. No Google Cloud, crie/seleciona um projeto, habilite **Gmail API** e crie credenciais OAuth 2.0 para aplicativo Web.
-2. Gere uma autorização offline com escopo `https://www.googleapis.com/auth/gmail.send` para a conta remetente e obtenha o `refresh_token`. No modo de teste do consentimento Google, tokens podem expirar após sete dias.
-3. Cadastre os três valores como segredos do Worker, sem colocá-los no Git:
-
-```powershell
-npx wrangler secret put GMAIL_CLIENT_ID
-npx wrangler secret put GMAIL_CLIENT_SECRET
-npx wrangler secret put GMAIL_REFRESH_TOKEN
-```
-
-4. Publique o Worker e abra **Ajustes → Enviar e-mail de teste**. O botão só fica disponível quando os três segredos existem. O histórico informa se o aviso está pendente, foi enviado ou falhou.
-
-O JobSignal reúne todas as vagas elegíveis ainda não notificadas em uma mensagem ao final da busca. Falhas anteriores ao envio são tentadas novamente. Se a confirmação da entrega ficar incerta, as vagas da tentativa ficam reservadas e não são reenviadas automaticamente; confira a pasta **Enviados** do Gmail antes de liberar uma nova tentativa. Endereços alterados devem corresponder às permissões de envio da conta Google.
-
-Consulte [Fontes e classificação](docs/fontes-e-classificacao.md) para exemplos de links, regras e limitações da leitura automática.
-
-## 🔒 Segurança e dados
-
-- A chave de acesso deve ser guardada como **Secret** no Worker e em `.dev.vars` apenas para testes locais.
-- A interface não contém segredos embutidos. A chave digitada fica em `sessionStorage`, até a aba ou sessão terminar.
-- A API exige autorização em todas as rotas; não há registro público de usuários.
-- A coleta usa somente os domínios e caminhos reconhecidos pelos adaptadores. Links de outros sites ficam pendentes, sem requisições arbitrárias.
-- Tokens OAuth do Gmail devem ser cadastrados como **Secrets** no Worker, nunca em `.dev.vars` versionado, no banco ou na interface.
-- Não armazene currículos, páginas inteiras ou dados pessoais desnecessários nesse banco.
-
-Para uso público mais amplo, avalie acrescentar Cloudflare Access e uma revisão específica de autenticação antes de divulgar o endereço da aplicação.
-
-## ✅ Verificação
+## Verificação
 
 ```powershell
 npm test
@@ -147,8 +79,10 @@ npm run verificar:worker
 npm run build
 ```
 
-Esses comandos testam regras centrais de classificação, verificam os tipos do Worker e compilam o Angular. Antes de considerar uma nova fonte suportada, valide sua integração com dados reais e confira os resultados no painel.
+Os comandos executam os testes das regras e dos adaptadores, verificam os tipos do Worker e compilam a interface. Antes de considerar uma integração recuperada após uma mudança no portal de origem, confira uma busca real e os links gerados.
 
-## 🚧 Estado do projeto
+## Segurança e limites
 
-O núcleo do sistema está implementado. A classificação automática é conservadora: quando o anúncio não confirma algum critério, a vaga fica em **pendentes**. Novas plataformas de carreiras exigem integrações próprias. O sistema não inventa vagas e não considera qualquer URL automaticamente compatível.
+A API exige a chave de acesso em suas rotas e usa limites de requisições configurados no Worker. A chave informada na interface fica em `sessionStorage`; segredos de envio permanecem fora do código e da interface compilada. Para expor o painel a mais usuários, revise a autenticação e considere uma camada adicional de controle de acesso.
+
+A classificação depende das informações publicadas pelas fontes e pode deixar anúncios inconclusivos na lista de pendências. O JobSignal não realiza candidaturas nem garante a disponibilidade contínua de portais de terceiros.

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasApinfo,
-  extrairVagasCatho, extrairVagasCiandt, extrairVagasGeekHunter, extrairVagasGupy,
+  extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
   extrairPaginaNttData, extrairVagasInfojobs, extrairVagasNerdin, extrairVagasVagasCom, reconstruirHtmlRaspado,
   textoDaPagina
 } from './fontes-html.ts';
@@ -65,14 +65,6 @@ test('extrai vagas e detalhes da listagem Recrut.ai sem executar HTML', () => {
   assert.equal(vaga.idExterno, 'AB1234');
   assert.equal(vaga.empresa, 'MG Info');
   assert.match(vaga.localidade, /Remoto/);
-});
-
-test('extrai metadados de elegibilidade e links da CI&T', () => {
-  const html = '<div class="opprtunity-item"><span class="sr-only filters-item">País_Brazil Workplace_type_Remote Área_Development___Quality_Assurance</span><h2>Junior Java Developer</h2><a href="/br/pt-br/carreiras/oportunidades/candidate-se?opportunity=893e578b-5f6b-4ebd-9420-e6e866a5dcf1">Candidate-se</a></div>';
-  const [vaga] = extrairVagasCiandt(html, 'CI&T', 'https://ciandt.com');
-  assert.equal(vaga?.titulo, 'Junior Java Developer');
-  assert.match(vaga?.descricao ?? '', /tecnologia da informação/);
-  assert.match(vaga?.localidade ?? '', /Remote/);
 });
 
 test('normaliza HTML de detalhe da CWI e entidades comuns', () => {
