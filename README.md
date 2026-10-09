@@ -4,6 +4,10 @@ Monitor pessoal de vagas de TI. O JobSignal reúne páginas de carreira cadastra
 
 O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron Triggers** na aplicação. O código pode ser versionado no GitHub; build e publicação podem ser executados diretamente do computador, sem GitHub Actions.
 
+## 🖥️ Prévia da interface
+
+![Painel inicial do JobSignal](docs/screenshots/painel-jobsignal.png)
+
 ## ✨ Funcionalidades
 
 - 🧭 **Painel:** resumo das fontes, vagas elegíveis, pendências e próxima busca.
