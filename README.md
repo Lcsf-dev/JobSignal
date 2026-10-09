@@ -4,6 +4,12 @@ Monitor pessoal de vagas de TI. O JobSignal reúne páginas de carreira cadastra
 
 O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron Triggers** na aplicação. O código pode ser versionado no GitHub; build e publicação podem ser executados diretamente do computador, sem GitHub Actions.
 
+## 🌐 Endereco de producao
+
+O JobSignal esta disponivel em `https://jobsignal.lchub.workers.dev/`. `jobsignal` e o nome deste Worker; `lchub` e o subdominio compartilhado da conta Cloudflare. O banco `jobsignal-db` e a fila `jobsignal-buscas` pertencem exclusivamente a este projeto e nao sao utilizados pelo LJV.
+
+Ao alterar o endereco da conta, atualize favoritos ou atalhos que usem a URL anterior. O nome do Worker em `wrangler.jsonc` permanece `jobsignal`, portanto as publicacoes futuras continuam atualizando o mesmo sistema.
+
 ## ✨ Funcionalidades
 
 - 🧭 **Painel:** resumo das fontes, vagas elegíveis, pendências e próxima busca.
