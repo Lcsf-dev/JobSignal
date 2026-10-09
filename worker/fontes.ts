@@ -1,5 +1,5 @@
 import type { VagaColetada } from './classificador';
-import { extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut, extrairVagasCiandt, textoDaPagina } from './fontes-html.ts';
+import { extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut, textoDaPagina } from './fontes-html.ts';
 
 export interface OrigemIdentificada {
   plataforma: 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'pendente';
@@ -81,6 +81,52 @@ export function interpretarVagaRemotar(item: Record<string, unknown>, empresa: s
     descricao: textoPlano(`${item['subtitle'] ?? ''} ${item['description'] ?? ''} ${item['moreInfos'] ?? ''}`), publicadaEm };
 }
 
+function interpretarVagaLever(item: Record<string, unknown>, empresa: string): VagaColetada | null {
+  if (typeof item['id'] !== 'string' || typeof item['text'] !== 'string') return null;
+  const url = String(item['hostedUrl'] ?? item['applyUrl'] ?? '');
+  if (!url.startsWith('https://')) return null;
+  const categorias = item['categories'] && typeof item['categories'] === 'object'
+    ? item['categories'] as Record<string, unknown> : {};
+  const modalidade = String(item['workplaceType'] ?? '').toLowerCase();
+  const modalidadeExibida = modalidade === 'remote' ? 'Remoto'
+    : modalidade === 'hybrid' ? 'Híbrido'
+      : modalidade === 'onsite' || modalidade === 'on-site' ? 'Presencial' : '';
+  const locais = Array.isArray(categorias['allLocations'])
+    ? categorias['allLocations'].filter((local): local is string => typeof local === 'string') : [];
+  const localPrincipal = String(categorias['location'] ?? '');
+  const localidade = [...new Set([modalidadeExibida, localPrincipal, ...locais].filter(Boolean))].join(' · ');
+  return {
+    idExterno: item['id'], titulo: item['text'], empresa, url, localidade,
+    descricao: textoPlano(item['descriptionPlain'] ?? item['description'] ?? '')
+  };
+}
+
+async function coletarVagasLever(identificador: string, empresa: string): Promise<VagaColetada[]> {
+  const [regiao, nome] = identificador.startsWith('eu:') ? ['eu', identificador.slice(3)] : ['', identificador];
+  const host = regiao === 'eu' ? 'api.eu.lever.co' : 'api.lever.co';
+  const vagas: VagaColetada[] = [];
+  const limitePagina = 20;
+  const maximoPaginas = 15;
+  for (let pagina = 0; pagina < maximoPaginas; pagina++) {
+    const url = new URL(`https://${host}/v0/postings/${nome}`);
+    url.searchParams.set('mode', 'json');
+    url.searchParams.set('limit', String(limitePagina));
+    url.searchParams.set('skip', String(pagina * limitePagina));
+    const dados = await obterJson(url.toString());
+    if (!Array.isArray(dados)) throw new Error('Formato inesperado da API Lever.');
+    vagas.push(...dados.map((item) => interpretarVagaLever(item as Record<string, unknown>, empresa))
+      .filter((vaga): vaga is VagaColetada => vaga !== null));
+    if (dados.length < limitePagina) return vagas;
+  }
+  const ultimaPagina = new URL(`https://${host}/v0/postings/${nome}`);
+  ultimaPagina.searchParams.set('mode', 'json');
+  ultimaPagina.searchParams.set('limit', '1');
+  ultimaPagina.searchParams.set('skip', String(maximoPaginas * limitePagina));
+  const restante = await obterJson(ultimaPagina.toString());
+  if (Array.isArray(restante) && restante.length === 0) return vagas;
+  throw new Error('A listagem Lever excedeu 300 vagas; a consulta foi interrompida com segurança.');
+}
+
 export async function coletarVagas(origem: OrigemIdentificada, empresa: string): Promise<VagaColetada[]> {
   if (!origem.identificador) throw new Error('Integração pendente para esta fonte.');
   if (origem.plataforma === 'recrutai') {
@@ -97,7 +143,7 @@ export async function coletarVagas(origem: OrigemIdentificada, empresa: string):
     return vagas;
   }
   if (origem.plataforma === 'ciandt') {
-    return extrairVagasCiandt(await obterTexto(origem.url, 'html'), empresa, origem.url);
+    return coletarVagasLever('ciandt', empresa);
   }
   if (origem.plataforma === 'cwi') {
     const resumos = extrairLinksCwi(await obterTexto(origem.url, 'html'));
@@ -133,17 +179,7 @@ export async function coletarVagas(origem: OrigemIdentificada, empresa: string):
     })).filter((vaga) => vaga.idExterno && vaga.titulo && vaga.url.startsWith('https://'));
   }
   if (origem.plataforma === 'lever') {
-    const [regiao, nome] = origem.identificador.startsWith('eu:') ? ['eu', origem.identificador.slice(3)] : ['', origem.identificador];
-    const host = regiao === 'eu' ? 'api.eu.lever.co' : 'api.lever.co';
-    const dados = await obterJson(`https://${host}/v0/postings/${nome}?mode=json&limit=100`) as Array<Record<string, unknown>>;
-    if (!Array.isArray(dados)) throw new Error('Formato inesperado da API Lever.');
-    if (dados.length >= 100) throw new Error('Fonte com 100 ou mais vagas; paginação ainda não suportada.');
-    return dados.map((item) => ({
-      idExterno: String(item.id), titulo: String(item.text ?? ''), empresa,
-      url: String(item.hostedUrl ?? item.applyUrl ?? ''),
-      localidade: String((item.categories as { location?: string } | undefined)?.location ?? ''),
-      descricao: textoPlano(item.descriptionPlain ?? item.description ?? '')
-    })).filter((vaga) => vaga.idExterno && vaga.titulo && vaga.url.startsWith('https://'));
+    return coletarVagasLever(origem.identificador, empresa);
   }
   throw new Error('Integração pendente para esta fonte.');
 }

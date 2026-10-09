@@ -34,8 +34,12 @@ export function classificar(vaga: VagaColetada, tiposAtivos: TipoVaga[]): Result
   if (/\b(exclusiv[oa]s? para pcd|exclusivamente para pcd|vaga exclusiva pcd|pcd somente)\b/.test(texto)) {
     return { classificacao: 'descartada', tipo: null, motivo: 'Vaga exclusiva para PCD.' };
   }
-  if (/\b(presencial|hibrid[oa])\b/.test(titulo + ' ' + normalizar(vaga.localidade)) && !remoto.test(titulo + ' ' + normalizar(vaga.localidade))) {
-    return { classificacao: 'descartada', tipo: null, motivo: 'Modalidade presencial ou híbrida.' };
+  const evidenciasModalidade = `${vaga.titulo} ${vaga.localidade}`;
+  const modalidadeNaoRemota = evidenciasModalidade.match(/\b(presencial|híbrido|híbrida|hibrido|hibrida|on-site|onsite)\b/i);
+  if (modalidadeNaoRemota) {
+    const localidade = vaga.localidade ? ` Localidade informada: ${vaga.localidade}.` : '';
+    return { classificacao: 'descartada', tipo: null,
+      motivo: `Modalidade ${modalidadeNaoRemota[0]} identificada no anúncio.${localidade} O JobSignal exibe somente vagas 100% remotas no Brasil.` };
   }
   if (restricaoExterior.test(texto)) {
     return { classificacao: 'descartada', tipo: null, motivo: 'Restrita a residentes de outro país.' };

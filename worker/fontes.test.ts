@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
+import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
 import { extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasCiandt, textoDaPagina } from './fontes-html.ts';
 
 test('identifica as fontes cadastradas do JobSignal', () => {
@@ -11,6 +11,29 @@ test('identifica as fontes cadastradas do JobSignal', () => {
   assert.equal(identificarOrigem('https://cwi.com.br/talentos/oportunidades/').plataforma, 'cwi');
   assert.equal(identificarOrigem('https://remotar.com.br/company/303/confitec').identificador, '303');
   assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs?language=pt_BR').plataforma, 'pendente');
+  assert.equal(identificarOrigem('https://careers.nttdata.com/br/pt/search-results').plataforma, 'pendente');
+});
+
+test('usa a API Lever paginada para consultar as vagas públicas da CI&T', async () => {
+  const chamadas: string[] = [];
+  const vagaLever = (id: number) => ({ id: `id-${id}`, text: `Vaga ${id}`, hostedUrl: `https://jobs.lever.co/ciandt/id-${id}`,
+    workplaceType: 'remote', categories: { location: 'Brazil', allLocations: ['Brazil'] }, descriptionPlain: 'Engenharia de software.' });
+  const respostaAnterior = globalThis.fetch;
+  globalThis.fetch = (async (entrada: RequestInfo | URL) => {
+    const endereco = new URL(entrada instanceof Request ? entrada.url : String(entrada));
+    chamadas.push(endereco.searchParams.get('skip') ?? '');
+    const registros = endereco.searchParams.get('skip') === '0'
+      ? Array.from({ length: 20 }, (_, indice) => vagaLever(indice))
+      : [vagaLever(20), vagaLever(21)];
+    return new Response(JSON.stringify(registros), { headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const vagas = await coletarVagas(identificarOrigem('https://ciandt.com/br/pt-br/carreiras/oportunidades'), 'CI&T');
+    assert.equal(vagas.length, 22);
+    assert.deepEqual(chamadas, ['0', '20']);
+    assert.match(vagas[0]?.localidade ?? '', /Remoto/);
+    assert.match(vagas[0]?.localidade ?? '', /Brazil/);
+  } finally { globalThis.fetch = respostaAnterior; }
 });
 
 test('guarda a data publicada pela Remotar e ignora vagas inativas', () => {

@@ -25,6 +25,15 @@ test('não aprova vaga sem confirmação de remoto e Brasil', () => {
   assert.equal(classificar(vaga('Desenvolvedor Júnior', 'Híbrido - Brasil'), tipos).classificacao, 'descartada');
 });
 
+test('explica a modalidade presencial ou híbrida identificada', () => {
+  const resultado = classificar(vaga('Analista de Testes Júnior (Híbrido)', 'São Bernardo do Campo - SP'), tipos);
+  assert.equal(resultado.classificacao, 'descartada');
+  assert.match(resultado.motivo, /Híbrido/);
+  assert.match(resultado.motivo, /São Bernardo do Campo/);
+  assert.match(resultado.motivo, /100% remotas no Brasil/);
+  assert.equal(classificar(vaga('Desenvolvedor Júnior', 'Remoto · híbrido dois dias por semana'), tipos).classificacao, 'descartada');
+});
+
 test('não confunde menção inclusiva com vaga exclusiva para PCD', () => {
   assert.equal(classificar(vaga('Desenvolvedor Júnior', 'Remoto - Brasil', 'Desenvolvimento de software. Pessoas PCD também são bem-vindas.'), tipos).classificacao, 'elegivel');
   assert.equal(classificar(vaga('Desenvolvedor Júnior', 'Remoto - Brasil', 'Desenvolvimento de software. Vaga exclusiva para PCD.'), tipos).classificacao, 'descartada');

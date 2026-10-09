@@ -130,15 +130,13 @@ async function distribuirPendencias(env: Ambiente): Promise<void> {
   await env.DB.prepare(`UPDATE tarefas SET estado = 'pendente' WHERE estado = 'em_execucao' AND tentativas < 3 AND iniciada_em < datetime('now', '-5 minutes')`).run();
   await env.DB.prepare(`UPDATE tarefas SET estado = 'erro', erro = 'Tempo de execução excedido.' WHERE estado = 'em_execucao' AND tentativas >= 3 AND iniciada_em < datetime('now', '-5 minutes')`).run();
   const tarefas = await env.DB.prepare(`SELECT id FROM tarefas WHERE estado = 'pendente' ORDER BY id LIMIT 25`).all<{ id: number }>();
-  for (const tarefa of tarefas.results) {
-    try {
-      await env.FILA.send({ tarefaId: tarefa.id });
-      await env.DB.prepare(`UPDATE tarefas SET estado = 'enfileirada' WHERE id = ? AND estado = 'pendente'`).bind(tarefa.id).run();
-    } catch (erro) {
-      console.error('Falha ao enfileirar tarefa', tarefa.id, erro);
-      break;
-    }
-  }
+  if (!tarefas.results.length) return;
+  try {
+    await env.FILA.sendBatch(tarefas.results.map((tarefa) => ({ body: { tarefaId: tarefa.id } })));
+    await env.DB.batch(tarefas.results.map((tarefa) => env.DB.prepare(
+      `UPDATE tarefas SET estado = 'enfileirada' WHERE id = ? AND estado = 'pendente'`
+    ).bind(tarefa.id)));
+  } catch (erro) { console.error('Falha ao enfileirar tarefas', erro); }
 }
 
 async function agendar(env: Ambiente, instante = new Date()): Promise<void> {
@@ -371,8 +369,6 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
       .bind(Number(tarefasExecucao[1])).all()).results);
   }
   if (caminho === '/api/executar' && metodo === 'POST') {
-    await sincronizarFontes(env);
-    await distribuirPendencias(env);
     await revisarExecucoes(env);
     const fontes = await env.DB.prepare("SELECT COUNT(*) AS total FROM fontes WHERE ativa = 1 AND plataforma != 'pendente'").first<{ total: number }>();
     if (!fontes?.total) return resposta({ erro: 'Nenhum site com integração ativa. Confira a situação em Sites monitorados.' }, 409);
