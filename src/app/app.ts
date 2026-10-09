@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'historico' | 'ajustes';
+type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'descartadas' | 'historico' | 'ajustes';
 type Tipo = 'estagio' | 'trainee' | 'junior' | 'analista_junior';
 
 interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
@@ -16,7 +16,8 @@ export class App {
   readonly menu: { id: Aba; icone: string; nome: string }[] = [
     { id: 'painel', icone: '◈', nome: 'Painel' }, { id: 'fontes', icone: '⌁', nome: 'Sites' },
     { id: 'vagas', icone: '▣', nome: 'Vagas' }, { id: 'pendentes', icone: '◇', nome: 'Pendentes' },
-    { id: 'historico', icone: '◷', nome: 'Histórico' }, { id: 'ajustes', icone: '⚙', nome: 'Ajustes' }
+    { id: 'descartadas', icone: '⊘', nome: 'Descartadas' }, { id: 'historico', icone: '◷', nome: 'Histórico' },
+    { id: 'ajustes', icone: '⚙', nome: 'Ajustes' }
   ];
   readonly tipos: { id: Tipo; nome: string; exemplos: string }[] = [
     { id: 'estagio', nome: 'Estágio', exemplos: 'Estágio, estagiário(a)' },
@@ -28,12 +29,15 @@ export class App {
   readonly conectado = signal(false);
   readonly restaurandoSessao = signal(true);
   readonly carregando = signal(false);
+  readonly solicitandoBusca = signal(false);
+  readonly buscaManualAtiva = signal(false);
   readonly erro = signal('');
   readonly aviso = signal('');
   readonly estado = signal<Estado | null>(null);
   readonly fontes = signal<Fonte[]>([]);
   readonly vagas = signal<Vaga[]>([]);
   readonly pendentes = signal<Vaga[]>([]);
+  readonly descartadas = signal<Vaga[]>([]);
   readonly historico = signal<Execucao[]>([]);
   readonly detalhesExecucao = signal<Record<number, TarefaExecucao[]>>({});
   readonly execucaoAberta = signal<number | null>(null);
@@ -51,7 +55,8 @@ export class App {
   }
 
   private async api<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
-    const resposta = await fetch(`/api${caminho}`, { ...opcoes, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}`, ...opcoes.headers } });
+    const resposta = await fetch(`/api${caminho}`, { ...opcoes, signal: opcoes.signal ?? AbortSignal.timeout(12000),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}`, ...opcoes.headers } });
     const dados = await resposta.json() as T & { erro?: string };
     if (!resposta.ok) {
       if (resposta.status === 401) { this.conectado.set(false); sessionStorage.removeItem('jobsignal_token'); }
@@ -60,7 +65,12 @@ export class App {
     return dados;
   }
 
-  private falha(erro: unknown): void { this.erro.set(erro instanceof Error ? erro.message : 'Não foi possível concluir a operação.'); this.aviso.set(''); }
+  private falha(erro: unknown): void {
+    const mensagem = erro instanceof DOMException && erro.name === 'TimeoutError'
+      ? 'A conexão demorou mais do que o esperado. Tente atualizar novamente.'
+      : erro instanceof Error ? erro.message : 'Não foi possível concluir a operação.';
+    this.erro.set(mensagem); this.aviso.set('');
+  }
 
   async entrar(): Promise<void> {
     this.token = this.token.trim();
@@ -74,14 +84,16 @@ export class App {
   async carregar(): Promise<void> {
     this.carregando.set(true); this.erro.set('');
     try {
-      const [estado, fontes, vagas, pendentes, historico] = await Promise.all([
+      const [estado, fontes, vagas, pendentes, descartadas, historico] = await Promise.all([
         this.api<Estado>('/estado'), this.api<Fonte[]>('/fontes'), this.api<Vaga[]>('/vagas?classificacao=elegivel'),
-        this.api<Vaga[]>('/vagas?classificacao=pendente'), this.api<Execucao[]>('/execucoes')
+        this.api<Vaga[]>('/vagas?classificacao=pendente'), this.api<Vaga[]>('/vagas?classificacao=descartada'),
+        this.api<Execucao[]>('/execucoes')
       ]);
       this.estado.set(estado);
       this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
       this.fontes.set(fontes.filter((fonte) => fonte.estado !== 'excluida'));
-      this.vagas.set(vagas); this.pendentes.set(pendentes); this.historico.set(historico); this.conectado.set(true);
+      this.vagas.set(vagas); this.pendentes.set(pendentes); this.descartadas.set(descartadas);
+      this.historico.set(historico); this.conectado.set(true);
     } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); this.restaurandoSessao.set(false); }
   }
 
@@ -138,19 +150,41 @@ export class App {
     catch (erro) { this.falha(erro); }
   }
 
-  buscaEmAndamento(): boolean { return ['pendente', 'em_andamento'].includes(this.estado()?.ultimaExecucao?.estado ?? ''); }
-
-  async executarAgora(): Promise<void> {
-    try { await this.api('/executar', { method: 'POST' }); await this.carregar(); this.aviso.set('Busca manual iniciada. O painel atualizará o andamento automaticamente.'); void this.atualizarBusca(); }
-    catch (erro) { this.falha(erro); }
+  buscaEmAndamento(): boolean {
+    return this.solicitandoBusca() || this.buscaManualAtiva() || ['pendente', 'em_andamento'].includes(this.estado()?.ultimaExecucao?.estado ?? '');
   }
 
-  private async atualizarBusca(): Promise<void> {
-    for (let tentativa = 0; tentativa < 90; tentativa++) {
-      await new Promise((resolver) => setTimeout(resolver, 4000));
+  async executarAgora(): Promise<void> {
+    if (this.buscaEmAndamento()) return;
+    this.solicitandoBusca.set(true);
+    try {
+      const resultado = await this.api<{ execucaoId: number; totalFontes: number }>('/executar', { method: 'POST' });
+      this.buscaManualAtiva.set(true);
+      this.aviso.set(`Busca iniciada para ${resultado.totalFontes} fontes. O andamento será atualizado aqui.`);
+      void this.atualizarBusca(resultado.execucaoId);
+    } catch (erro) { this.falha(erro); }
+    finally { this.solicitandoBusca.set(false); }
+  }
+
+  private async atualizarBusca(execucaoId: number): Promise<void> {
+    try {
+      for (let tentativa = 0; tentativa < 90; tentativa++) {
+        const [estado, historico] = await Promise.all([
+          this.api<Estado>('/estado'), this.api<Execucao[]>('/execucoes')
+        ]);
+        this.estado.set(estado);
+        this.historico.set(historico);
+        const execucao = historico.find((item) => item.id === execucaoId);
+        if (execucao && !['pendente', 'em_andamento'].includes(execucao.estado)) {
+          await this.carregar();
+          return;
+        }
+        await new Promise((resolver) => setTimeout(resolver, 3000));
+      }
       await this.carregar();
-      if (!this.buscaEmAndamento()) return;
-    }
+      this.aviso.set('A busca continua processando. Acompanhe o andamento no Histórico.');
+    } catch (erro) { this.falha(erro); }
+    finally { this.buscaManualAtiva.set(false); }
   }
 
   async testarEmail(): Promise<void> {
