@@ -36,13 +36,29 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
 }
 
 async function obterTexto(url: string, tipo: 'json' | 'html' = 'json'): Promise<string> {
-  const resposta = await fetch(url, { headers: { Accept: tipo === 'json' ? 'application/json' : 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(12000) });
-  if (!resposta.ok) throw new Error(`Fonte respondeu HTTP ${resposta.status}.`);
-  const tamanho = Number(resposta.headers.get('content-length') || 0);
-  if (tamanho > 1_000_000) throw new Error('Resposta maior que 1 MB; fonte precisa de paginação.');
-  const texto = await resposta.text();
-  if (texto.length > 1_000_000) throw new Error('Resposta maior que 1 MB; fonte precisa de paginação.');
-  return texto;
+  let endereco = new URL(url);
+  const hostOriginal = endereco.hostname;
+  const hostsPermitidos = new Set([hostOriginal, hostOriginal.startsWith('www.') ? hostOriginal.slice(4) : `www.${hostOriginal}`]);
+  for (let redirecionamentos = 0; redirecionamentos <= 3; redirecionamentos++) {
+    const resposta = await fetch(endereco, { headers: { Accept: tipo === 'json' ? 'application/json' : 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(12000) });
+    if (resposta.status >= 300 && resposta.status < 400) {
+      const destino = resposta.headers.get('location');
+      if (!destino || redirecionamentos === 3) throw new Error(`Fonte respondeu HTTP ${resposta.status} sem redirecionamento seguro.`);
+      const proximoEndereco = new URL(destino, endereco);
+      if (proximoEndereco.protocol !== 'https:' || !hostsPermitidos.has(proximoEndereco.hostname)) {
+        throw new Error('A fonte tentou redirecionar para outro domínio; consulta interrompida por segurança.');
+      }
+      endereco = proximoEndereco;
+      continue;
+    }
+    if (!resposta.ok) throw new Error(`Fonte respondeu HTTP ${resposta.status}.`);
+    const tamanho = Number(resposta.headers.get('content-length') || 0);
+    if (tamanho > 1_000_000) throw new Error('Resposta maior que 1 MB; fonte precisa de paginação.');
+    const texto = await resposta.text();
+    if (texto.length > 1_000_000) throw new Error('Resposta maior que 1 MB; fonte precisa de paginação.');
+    return texto;
+  }
+  throw new Error('A fonte excedeu o limite de redirecionamentos.');
 }
 
 async function obterJson(url: string): Promise<unknown> {
@@ -51,6 +67,18 @@ async function obterJson(url: string): Promise<unknown> {
 
 function textoPlano(valor: unknown): string {
   return String(valor ?? '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim().slice(0, 3000);
+}
+
+export function interpretarVagaRemotar(item: Record<string, unknown>, empresa: string): VagaColetada | null {
+  if (item['active'] !== true || item['expired'] === true || typeof item['title'] !== 'string' || !Number.isInteger(item['id'])) return null;
+  const id = String(item['id']);
+  const link = String(item['externalLink'] ?? '');
+  const publicadaEm = typeof item['createdAt'] === 'string' && Number.isFinite(Date.parse(item['createdAt']))
+    ? new Date(item['createdAt']).toISOString() : undefined;
+  return { idExterno: id, titulo: item['title'], empresa,
+    url: link.startsWith('https://') ? link : `https://remotar.com.br/job/${id}`,
+    localidade: [item['city'], item['state'], 'Remoto'].filter(Boolean).join(' · '),
+    descricao: textoPlano(`${item['subtitle'] ?? ''} ${item['description'] ?? ''} ${item['moreInfos'] ?? ''}`), publicadaEm };
 }
 
 export async function coletarVagas(origem: OrigemIdentificada, empresa: string): Promise<VagaColetada[]> {
@@ -86,12 +114,8 @@ export async function coletarVagas(origem: OrigemIdentificada, empresa: string):
       const ultimaPagina = dados.meta?.last_page;
       if (!Array.isArray(dados.data) || typeof ultimaPagina !== 'number' || !Number.isInteger(ultimaPagina)) throw new Error('Listagem da Remotar em formato inesperado.');
       for (const item of dados.data) {
-        if (item['active'] !== true || item['expired'] === true || typeof item['title'] !== 'string' || !Number.isInteger(item['id'])) continue;
-        const link = String(item['externalLink'] ?? '');
-        const url = link.startsWith('https://') ? link : `https://remotar.com.br/job/${item['id']}`;
-        vagas.push({ idExterno: String(item['id']), titulo: item['title'], empresa, url,
-          localidade: [item['city'], item['state'], 'Remoto'].filter(Boolean).join(' · '),
-          descricao: textoPlano(`${item['subtitle'] ?? ''} ${item['description'] ?? ''} ${item['moreInfos'] ?? ''}`) });
+        const vaga = interpretarVagaRemotar(item, empresa);
+        if (vaga) vagas.push(vaga);
       }
       if (pagina >= ultimaPagina) return vagas;
     }

@@ -8,6 +8,7 @@ export interface VagaColetada {
   url: string;
   localidade: string;
   descricao: string;
+  publicadaEm?: string;
 }
 
 export interface ResultadoClassificacao {

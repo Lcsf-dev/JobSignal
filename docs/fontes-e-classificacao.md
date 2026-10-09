@@ -7,7 +7,7 @@ Informe o nome da empresa e a URL da **página que lista suas vagas**. Exemplos 
 - `https://jobs.lever.co/empresa`
 - `https://job-boards.greenhouse.io/empresa`
 
-Greenhouse e Lever usam as APIs públicas das plataformas. Também há adaptadores para Recrut.ai, CI&T, CWI e listagens públicas da Remotar. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo.
+Greenhouse e Lever usam as APIs públicas das plataformas. Também há adaptadores para Recrut.ai, CI&T, CWI e listagens públicas da Remotar. A Remotar fornece uma data de cadastro, que é exibida separada da primeira detecção feita pelo JobSignal. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo.
 
 ## 🎯 Elegibilidade
 

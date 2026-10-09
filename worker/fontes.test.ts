@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { identificarOrigem } from './fontes.ts';
+import { identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
 import { extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasCiandt, textoDaPagina } from './fontes-html.ts';
 
 test('identifica as fontes cadastradas do JobSignal', () => {
@@ -11,6 +11,13 @@ test('identifica as fontes cadastradas do JobSignal', () => {
   assert.equal(identificarOrigem('https://cwi.com.br/talentos/oportunidades/').plataforma, 'cwi');
   assert.equal(identificarOrigem('https://remotar.com.br/company/303/confitec').identificador, '303');
   assert.equal(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs?language=pt_BR').plataforma, 'pendente');
+});
+
+test('guarda a data publicada pela Remotar e ignora vagas inativas', () => {
+  const vaga = interpretarVagaRemotar({ id: 303, active: true, expired: false, title: 'Analista Júnior',
+    createdAt: '2026-09-15T08:47:22.387-03:00', externalLink: 'https://confitec.gupy.io/job/303' }, 'Confitec');
+  assert.equal(vaga?.publicadaEm, '2026-09-15T11:47:22.387Z');
+  assert.equal(interpretarVagaRemotar({ id: 304, active: false, title: 'Vaga encerrada' }, 'Confitec'), null);
 });
 
 test('extrai vagas e detalhes da listagem Recrut.ai sem executar HTML', () => {

@@ -35,6 +35,7 @@ JobSignal/
 ├── migrations/             Evolução versionada do banco D1
 │   └── 0001_inicial.sql    Tabelas e índices iniciais
 │   └── 0002_buscas_email.sql  Campos de busca e aviso por e-mail
+│   └── 0003_data_publicacao.sql  Data informada pela fonte da vaga
 ├── public/                 Imagens estáticas, incluindo a logo
 ├── docs/                   Explicações técnicas e das fontes
 └── wrangler.jsonc          Configuração dos recursos Cloudflare

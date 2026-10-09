@@ -251,13 +251,14 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
         .bind(tarefa.fonte_id, vaga.idExterno).first<{ id: number; classificacao: string; tipo: string | null; motivo: string }>();
       if (!existente) {
         const insercao = await env.DB.prepare(`INSERT OR IGNORE INTO vagas
-          (fonte_id, id_externo, titulo, empresa, url, localidade, tipo, classificacao, motivo, notificada_em)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(tarefa.fonte_id, vaga.idExterno, vaga.titulo, vaga.empresa, vaga.url,
-          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, null).run();
+          (fonte_id, id_externo, titulo, empresa, url, localidade, tipo, classificacao, motivo, notificada_em, publicada_em)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(tarefa.fonte_id, vaga.idExterno, vaga.titulo, vaga.empresa, vaga.url,
+          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, null, vaga.publicadaEm ?? null).run();
         if (insercao.meta.changes) novas++;
-      } else if (existente.classificacao !== classificacao.classificacao || existente.tipo !== classificacao.tipo || existente.motivo !== classificacao.motivo) {
-        await env.DB.prepare(`UPDATE vagas SET titulo = ?, url = ?, localidade = ?, tipo = ?, classificacao = ?, motivo = ?, ultima_confirmacao = CURRENT_TIMESTAMP WHERE id = ?`)
-          .bind(vaga.titulo, vaga.url, vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, existente.id).run();
+      } else {
+        await env.DB.prepare(`UPDATE vagas SET titulo = ?, url = ?, localidade = ?, publicada_em = COALESCE(?, publicada_em),
+          tipo = ?, classificacao = ?, motivo = ?, ultima_confirmacao = CURRENT_TIMESTAMP WHERE id = ?`)
+          .bind(vaga.titulo, vaga.url, vaga.localidade, vaga.publicadaEm ?? null, classificacao.tipo, classificacao.classificacao, classificacao.motivo, existente.id).run();
       }
     }
     await env.DB.prepare(`UPDATE fontes SET estado = 'ativa', ultima_tentativa = CURRENT_TIMESTAMP, ultima_consulta = CURRENT_TIMESTAMP,
@@ -362,6 +363,12 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
   }
   if (caminho === '/api/execucoes' && metodo === 'GET') {
     return resposta((await env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 30').all()).results);
+  }
+  const tarefasExecucao = /^\/api\/execucoes\/(\d+)\/tarefas$/.exec(caminho);
+  if (tarefasExecucao && metodo === 'GET') {
+    return resposta((await env.DB.prepare(`SELECT t.id, f.nome AS fonte, t.estado, t.tentativas, t.vagas_lidas, t.vagas_novas, t.erro
+      FROM tarefas t JOIN fontes f ON f.id = t.fonte_id WHERE t.execucao_id = ? ORDER BY f.nome`)
+      .bind(Number(tarefasExecucao[1])).all()).results);
   }
   if (caminho === '/api/executar' && metodo === 'POST') {
     await sincronizarFontes(env);
