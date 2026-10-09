@@ -102,9 +102,15 @@ Os dados exibidos vêm das fontes públicas cadastradas. Cada plataforma tem um 
 
 ## ✉️ Avisos por Gmail
 
-Os campos de remetente e destinatário ficam editáveis em **Ajustes**. Os valores iniciais são `yugi.lucas@gmail.com` e `lucas.lcsf.dev@gmail.com`. O remetente precisa ser a conta Google autorizada no Gmail API ou um endereço permitido como alias dessa conta. Não é necessário comprar domínio nem usar Email Routing.
+Os campos de remetente e destinatário ficam editáveis em **Ajustes**. Os valores iniciais são `yugi.lucas@gmail.com` e `lucas.lcsf.dev@gmail.com`. O remetente precisa ser a conta Google que gerou a senha de app ou um endereço permitido como alias dessa conta. Não é necessário comprar domínio nem usar Email Routing.
 
-O envio usa Gmail API OAuth 2.0; nenhuma senha é guardada no banco ou no código. Para ativar:
+O modo mais simples de envio usa SMTP do Gmail com uma **senha de app**. A verificação em duas etapas precisa estar ativa na conta remetente. A senha é criptografada antes de ser guardada no banco; a chave de criptografia fica somente como segredo do Worker:
+
+1. Na conta remetente, abra [Senhas de app do Google](https://myaccount.google.com/apppasswords) e crie uma senha para `JobSignal`.
+2. Em **Ajustes → Receber vagas por e-mail**, cole a senha no campo **Senha de app do Gmail** e clique em **Salvar senha de app**. Não use a senha normal da conta Google.
+3. Aguarde a próxima verificação: o JobSignal enviará um único resumo das vagas elegíveis ainda não notificadas. Use **Enviar e-mail de teste** apenas se precisar diagnosticar a entrega.
+
+O Gmail API OAuth 2.0 continua disponível como alternativa. Para ativá-lo sem senha de app:
 
 1. No Google Cloud, crie/seleciona um projeto, habilite **Gmail API** e crie credenciais OAuth 2.0 para aplicativo Web.
 2. Gere uma autorização offline com escopo `https://www.googleapis.com/auth/gmail.send` para a conta remetente e obtenha o `refresh_token`. No modo de teste do consentimento Google, tokens podem expirar após sete dias.
@@ -118,7 +124,7 @@ npx wrangler secret put GMAIL_REFRESH_TOKEN
 
 4. Publique o Worker e abra **Ajustes → Enviar e-mail de teste**. O botão só fica disponível quando os três segredos existem. O histórico informa se o aviso está pendente, foi enviado ou falhou.
 
-O JobSignal reúne vagas elegíveis ainda não notificadas e envia até 50 por mensagem ao final da busca. Falhas são registradas e tentadas novamente em execuções posteriores. Endereços alterados devem corresponder às permissões de envio da conta Google.
+O JobSignal reúne todas as vagas elegíveis ainda não notificadas em uma mensagem ao final da busca. Falhas anteriores ao envio são tentadas novamente. Se a confirmação da entrega ficar incerta, as vagas da tentativa ficam reservadas e não são reenviadas automaticamente; confira a pasta **Enviados** do Gmail antes de liberar uma nova tentativa. Endereços alterados devem corresponder às permissões de envio da conta Google.
 
 Consulte [Fontes e classificação](docs/fontes-e-classificacao.md) para exemplos de links, regras e limitações da leitura automática.
 

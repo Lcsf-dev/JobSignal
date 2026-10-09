@@ -49,6 +49,8 @@ export class App {
   readonly execucaoAberta = signal<number | null>(null);
   readonly execucaoCarregando = signal<number | null>(null);
   token = '';
+  senhaDeApp = '';
+  readonly salvandoSenhaDeApp = signal(false);
   nomeFonte = '';
   urlFonte = '';
   fonteEmEdicao: number | null = null;
@@ -200,6 +202,18 @@ export class App {
   async testarEmail(): Promise<void> {
     try { await this.api('/email/testar', { method: 'POST' }); this.aviso.set(`E-mail de teste enviado para ${this.configuracao.email_destinatario}.`); }
     catch (erro) { this.falha(erro); }
+  }
+
+  async salvarSenhaDeApp(): Promise<void> {
+    if (this.salvandoSenhaDeApp() || !this.senhaDeApp.trim()) return;
+    this.salvandoSenhaDeApp.set(true);
+    try {
+      await this.api('/email/senha-app', { method: 'PUT', body: JSON.stringify({ senha: this.senhaDeApp }) });
+      this.senhaDeApp = '';
+      await this.carregar();
+      this.aviso.set('Senha de app salva. As vagas elegíveis ainda não enviadas serão reunidas em um e-mail na próxima verificação.');
+    } catch (erro) { this.falha(erro); }
+    finally { this.salvandoSenhaDeApp.set(false); }
   }
 
   selecionarAcompanhamento(vagaId: number, acompanhamento: string): void {

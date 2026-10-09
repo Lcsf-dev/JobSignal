@@ -1,6 +1,7 @@
 import { classificar, type TipoVaga } from './classificador';
 import { coletarVagas, identificarOrigem } from './fontes';
 import { emailValido, enviarPeloGmail, gmailConfigurado, type VagaParaEmail } from './email';
+import { credenciaisGmail, emailConfigurado, salvarSenhaDeApp } from './credenciais-email';
 
 interface Ambiente {
   DB: D1Database;
@@ -8,6 +9,8 @@ interface Ambiente {
   ASSETS: Fetcher;
   BROWSER: BrowserRun;
   ACESSO_TOKEN?: string;
+  GMAIL_APP_PASSWORD?: string;
+  EMAIL_ENCRYPTION_KEY?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
   GMAIL_REFRESH_TOKEN?: string;
@@ -186,11 +189,12 @@ async function revisarExecucoes(env: Ambiente): Promise<void> {
 async function notificarExecucao(env: Ambiente, execucaoId: number): Promise<void> {
   const configuracao = await configuracaoAtual(env.DB);
   if (!configuracao.email_ativo) {
-    await env.DB.prepare("UPDATE execucoes SET email_estado = 'desativado' WHERE id = ? AND email_estado != 'enviado'").bind(execucaoId).run();
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'desativado' WHERE id = ? AND email_estado NOT IN ('enviado','envio_incerto')").bind(execucaoId).run();
     return;
   }
-  if (!gmailConfigurado(env)) {
-    await env.DB.prepare("UPDATE execucoes SET email_estado = 'configuracao_pendente', email_erro = 'Conecte a conta do Gmail para enviar alertas.' WHERE id = ? AND email_estado NOT IN ('enviado','sem_vagas')")
+  const segredos = await credenciaisGmail(env);
+  if (!gmailConfigurado(segredos)) {
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'configuracao_pendente', email_erro = 'Conecte a conta do Gmail para enviar alertas.' WHERE id = ? AND email_estado NOT IN ('enviado','sem_vagas','envio_incerto')")
       .bind(execucaoId).run();
     return;
   }
@@ -201,21 +205,38 @@ async function notificarExecucao(env: Ambiente, execucaoId: number): Promise<voi
       (email_estado = 'enviando' AND email_tentado_em < datetime('now', '-15 minutes')))`).bind(execucaoId).run();
   if (!reserva.meta.changes) return;
   try {
+    await env.DB.prepare(`UPDATE vagas SET email_execucao_id = ?
+      WHERE classificacao = 'elegivel' AND arquivada_em IS NULL AND notificada_em IS NULL AND email_execucao_id IS NULL`)
+      .bind(execucaoId).run();
     const vagas = await env.DB.prepare(`SELECT id, titulo, empresa, url, tipo FROM vagas
-      WHERE classificacao = 'elegivel' AND arquivada_em IS NULL AND notificada_em IS NULL ORDER BY primeira_deteccao, id LIMIT 50`).all<VagaParaEmail>();
+      WHERE classificacao = 'elegivel' AND arquivada_em IS NULL AND notificada_em IS NULL AND email_execucao_id = ?
+      ORDER BY primeira_deteccao, id`).bind(execucaoId).all<VagaParaEmail>();
     if (!vagas.results.length) {
+      await env.DB.prepare('UPDATE vagas SET email_execucao_id = NULL WHERE email_execucao_id = ? AND notificada_em IS NULL')
+        .bind(execucaoId).run();
       await env.DB.prepare("UPDATE execucoes SET email_estado = 'sem_vagas', email_total_vagas = 0 WHERE id = ?").bind(execucaoId).run();
       return;
     }
-    await enviarPeloGmail(env, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, vagas.results);
+    await enviarPeloGmail(segredos, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, vagas.results, false,
+      async () => {
+        const registro = await env.DB.prepare("UPDATE execucoes SET email_estado = 'envio_incerto' WHERE id = ? AND email_estado = 'enviando'")
+          .bind(execucaoId).run();
+        if (!registro.meta.changes) throw new Error('Não foi possível registrar a tentativa de envio antes de contactar o Gmail.');
+      });
     const marcadores = vagas.results.map(() => '?').join(',');
-    await env.DB.prepare(`UPDATE vagas SET notificada_em = CURRENT_TIMESTAMP WHERE id IN (${marcadores}) AND notificada_em IS NULL`)
-      .bind(...vagas.results.map((vaga) => vaga.id)).run();
+    const notificadas = await env.DB.prepare(`UPDATE vagas SET notificada_em = CURRENT_TIMESTAMP
+      WHERE id IN (${marcadores}) AND email_execucao_id = ? AND notificada_em IS NULL`)
+      .bind(...vagas.results.map((vaga) => vaga.id), execucaoId).run();
+    if (notificadas.meta.changes !== vagas.results.length) throw new Error('O Gmail aceitou a mensagem, mas o registro das vagas precisa ser conferido.');
     await env.DB.prepare("UPDATE execucoes SET email_estado = 'enviado', email_enviado_em = CURRENT_TIMESTAMP, email_total_vagas = ? WHERE id = ?")
       .bind(vagas.results.length, execucaoId).run();
   } catch (erro) {
     const mensagem = erro instanceof Error ? erro.message.slice(0, 250) : 'Falha desconhecida no envio.';
-    await env.DB.prepare("UPDATE execucoes SET email_estado = 'erro', email_erro = ? WHERE id = ?").bind(mensagem, execucaoId).run();
+    await env.DB.prepare(`UPDATE vagas SET email_execucao_id = NULL WHERE email_execucao_id = ? AND notificada_em IS NULL
+      AND EXISTS (SELECT 1 FROM execucoes WHERE id = ? AND email_estado != 'envio_incerto')`)
+      .bind(execucaoId, execucaoId).run();
+    await env.DB.prepare("UPDATE execucoes SET email_estado = CASE WHEN email_estado = 'envio_incerto' THEN 'envio_incerto' ELSE 'erro' END, email_erro = ? WHERE id = ?")
+      .bind(mensagem, execucaoId).run();
     console.error('Falha ao enviar alerta do JobSignal', execucaoId, mensagem);
   }
 }
@@ -315,7 +336,7 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
       env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'pendente' AND arquivada_em IS NULL").first<{ total: number }>(),
       env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 1').first()
     ]);
-    return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, emailConfigurado: gmailConfigurado(env), proximaBusca: proximaBusca(configuracao),
+    return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, emailConfigurado: await emailConfigurado(env), proximaBusca: proximaBusca(configuracao),
       fontesCadastradas: fontes?.cadastradas ?? 0, fontesAtivas: fontes?.ativas ?? 0,
       fontesSemIntegracao: fontes?.sem_integracao ?? 0, fontesPausadas: fontes?.pausadas ?? 0,
       vagasElegiveis: vagas?.total ?? 0, vagasPendentes: pendentes?.total ?? 0, ultimaExecucao: ultima });
@@ -337,11 +358,19 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
         dados['email_remetente'].trim(), dados['email_destinatario'].trim(), dados['email_ativo'] ? 1 : 0).run();
     return resposta({ ok: true });
   }
+  if (caminho === '/api/email/senha-app' && metodo === 'PUT') {
+    const dados = await corpoJson(request);
+    if (typeof dados['senha'] !== 'string') return resposta({ erro: 'Informe a senha de app do Gmail.' }, 400);
+    try { await salvarSenhaDeApp(env, dados['senha']); }
+    catch (erro) { return resposta({ erro: erro instanceof Error ? erro.message : 'Não foi possível salvar a senha de app.' }, 400); }
+    return resposta({ ok: true });
+  }
   if (caminho === '/api/email/testar' && metodo === 'POST') {
     const configuracao = await configuracaoAtual(env.DB);
-    if (!gmailConfigurado(env)) return resposta({ erro: 'A conta do Gmail ainda não foi conectada.' }, 409);
+    const segredos = await credenciaisGmail(env);
+    if (!gmailConfigurado(segredos)) return resposta({ erro: 'A conta do Gmail ainda não foi conectada.' }, 409);
     try {
-      await enviarPeloGmail(env, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, [], true);
+      await enviarPeloGmail(segredos, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, [], true);
       return resposta({ ok: true, mensagem: `E-mail de teste enviado para ${configuracao.email_destinatario}.` });
     } catch (erro) {
       return resposta({ erro: erro instanceof Error ? erro.message : 'Falha no envio do teste.' }, 502);
