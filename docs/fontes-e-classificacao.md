@@ -25,7 +25,7 @@ Os resultados possíveis são:
 | Pendente | O anúncio não informa tudo o que é necessário. |
 | Descartada | Há incompatibilidade clara ou o tipo foi desativado. |
 
-As vagas pendentes não são apresentadas como elegíveis. Vagas descartadas podem ser consultadas na aba **Descartadas**, que mostra o motivo e a evidência de modalidade/localidade identificada. Vagas explicitamente afirmativas para PcD ou mulheres recebem marcadores e têm opções próprias em Ajustes; as opções são aplicadas ao consultar a fonte novamente. A análise automática não substitui a leitura do anúncio original antes de se candidatar. Alterações nas opções de tipo serão aplicadas às vagas ao serem consultadas novamente.
+As vagas pendentes não são apresentadas como elegíveis. Vagas descartadas pela classificação automática podem ser consultadas na aba **Descartadas**, que mostra o motivo e a evidência de modalidade/localidade identificada. Na aba de elegíveis, o acompanhamento manual é confirmado pelo botão **OK**: **Nova** e **Tenho interesse** permanecem no painel; **Me candidatei** e **Descartada por mim** vão para o **Histórico de vagas** e não voltam às elegíveis em consultas futuras. O usuário pode restaurar uma vaga do histórico, redefinindo seu acompanhamento para **Nova**. Vagas explicitamente afirmativas para PcD ou mulheres recebem marcadores e têm opções próprias em Ajustes; as opções são aplicadas ao consultar a fonte novamente. A análise automática não substitui a leitura do anúncio original antes de se candidatar. Alterações nas opções de tipo serão aplicadas às vagas ao serem consultadas novamente.
 
 ## 🧩 Ampliar integrações
 

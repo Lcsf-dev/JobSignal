@@ -202,7 +202,7 @@ async function notificarExecucao(env: Ambiente, execucaoId: number): Promise<voi
   if (!reserva.meta.changes) return;
   try {
     const vagas = await env.DB.prepare(`SELECT id, titulo, empresa, url, tipo FROM vagas
-      WHERE classificacao = 'elegivel' AND notificada_em IS NULL ORDER BY primeira_deteccao, id LIMIT 50`).all<VagaParaEmail>();
+      WHERE classificacao = 'elegivel' AND arquivada_em IS NULL AND notificada_em IS NULL ORDER BY primeira_deteccao, id LIMIT 50`).all<VagaParaEmail>();
     if (!vagas.results.length) {
       await env.DB.prepare("UPDATE execucoes SET email_estado = 'sem_vagas', email_total_vagas = 0 WHERE id = ?").bind(execucaoId).run();
       return;
@@ -311,8 +311,8 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
         SUM(CASE WHEN plataforma = 'pendente' THEN 1 ELSE 0 END) AS sem_integracao,
         SUM(CASE WHEN ativa = 0 AND plataforma != 'pendente' THEN 1 ELSE 0 END) AS pausadas
         FROM fontes WHERE estado != 'excluida'`).first<{ cadastradas: number; ativas: number; sem_integracao: number; pausadas: number }>(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'elegivel'").first<{ total: number }>(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'pendente'").first<{ total: number }>(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'elegivel' AND arquivada_em IS NULL").first<{ total: number }>(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'pendente' AND arquivada_em IS NULL").first<{ total: number }>(),
       env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 1').first()
     ]);
     return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, emailConfigurado: gmailConfigurado(env), proximaBusca: proximaBusca(configuracao),
@@ -381,16 +381,33 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
   }
   if (caminho === '/api/vagas' && metodo === 'GET') {
     const url = new URL(request.url);
+    if (url.searchParams.get('arquivadas') === '1') {
+      const pagina = Number(url.searchParams.get('pagina') ?? '0');
+      if (!Number.isSafeInteger(pagina) || pagina < 0 || pagina > 10000) return resposta({ erro: 'Página inválida.' }, 400);
+      return resposta((await env.DB.prepare(`SELECT v.*, f.nome AS fonte_nome FROM vagas v JOIN fontes f ON f.id = v.fonte_id
+        WHERE v.arquivada_em IS NOT NULL ORDER BY v.arquivada_em DESC, v.id DESC LIMIT 101 OFFSET ?`)
+        .bind(pagina * 100).all()).results);
+    }
     const filtro = url.searchParams.get('classificacao') ?? 'elegivel';
     if (!['elegivel', 'pendente', 'descartada'].includes(filtro)) return resposta({ erro: 'Filtro inválido.' }, 400);
     return resposta((await env.DB.prepare(`SELECT v.*, f.nome AS fonte_nome FROM vagas v JOIN fontes f ON f.id = v.fonte_id
-      WHERE v.classificacao = ? ORDER BY v.primeira_deteccao DESC, v.id DESC LIMIT 100`).bind(filtro).all()).results);
+      WHERE v.classificacao = ? AND v.arquivada_em IS NULL ORDER BY v.primeira_deteccao DESC, v.id DESC LIMIT 100`).bind(filtro).all()).results);
   }
   const vagaId = /^\/api\/vagas\/(\d+)$/.exec(caminho);
   if (vagaId && metodo === 'PATCH') {
     const dados = await corpoJson(request);
-    if (!['novo', 'interesse', 'candidatura', 'descartado'].includes(String(dados['acompanhamento']))) return resposta({ erro: 'Estado inválido.' }, 400);
-    await env.DB.prepare('UPDATE vagas SET acompanhamento = ? WHERE id = ?').bind(dados['acompanhamento'], Number(vagaId[1])).run();
+    const acompanhamento = dados['acompanhamento'];
+    const arquivar = dados['arquivar'];
+    if (!['novo', 'interesse', 'candidatura', 'descartado'].includes(String(acompanhamento)))
+      return resposta({ erro: 'Estado inválido.' }, 400);
+    const deveArquivar = acompanhamento === 'candidatura' || acompanhamento === 'descartado';
+    if (arquivar !== undefined && arquivar !== deveArquivar)
+      return resposta({ erro: 'O histórico deve corresponder ao acompanhamento escolhido.' }, 400);
+    const alteracao = await env.DB.prepare(`UPDATE vagas SET acompanhamento = ?,
+      arquivada_em = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END
+      WHERE id = ? AND (? = 0 OR classificacao = 'elegivel')`)
+      .bind(acompanhamento, deveArquivar ? 1 : 0, Number(vagaId[1]), deveArquivar ? 1 : 0).run();
+    if (!alteracao.meta.changes) return resposta({ erro: 'Vaga não encontrada ou não está mais elegível.' }, 404);
     return resposta({ ok: true });
   }
   if (caminho === '/api/execucoes' && metodo === 'GET') {

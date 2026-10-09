@@ -204,14 +204,21 @@ export function extrairVagasNttData(resultado: unknown, empresa: string, base: s
   if (!dados.success) throw new Error(`Browser Run da Cloudflare: ${dados.errors?.message ?? 'falha ao renderizar a página da NTT DATA.'}`);
   const conteudo = dados.result?.find((item) => item.selector === '#jobsignal-todos-resultados')?.results?.[0]?.text;
   let linhas: Array<{ html?: string; text?: string }> = [];
+  let diagnostico = '';
   if (conteudo) {
     try {
       const json: unknown = JSON.parse(conteudo);
       if (Array.isArray(json)) linhas = json.filter((linha): linha is { html?: string; text?: string } => !!linha && typeof linha === 'object');
+      else if (json && typeof json === 'object') {
+        const coleta = json as { linhas?: unknown; totalLinhasTabela?: unknown; exemplosLinks?: unknown };
+        if (Array.isArray(coleta.linhas)) linhas = coleta.linhas.filter((linha): linha is { html?: string; text?: string } => !!linha && typeof linha === 'object');
+        const exemplos = Array.isArray(coleta.exemplosLinks) ? coleta.exemplosLinks.filter((link): link is string => typeof link === 'string').slice(0, 3) : [];
+        diagnostico = ` Linhas na tabela: ${Number(coleta.totalLinhasTabela) || 0}. Links encontrados: ${exemplos.join(', ') || 'nenhum'}.`;
+      }
     } catch { throw new Error('A paginação renderizada pela NTT DATA retornou dados inválidos.'); }
   }
   if (!linhas.length) linhas = dados.result?.find((item) => item.selector === '#tableData tbody tr')?.results ?? [];
-  if (!linhas.length) throw new Error('A NTT DATA não retornou linhas; o portal pode estar indisponível ou ter alterado o layout.');
+  if (!linhas.length) throw new Error(`A NTT DATA não retornou anúncios; o portal pode estar indisponível ou ter alterado o layout.${diagnostico}`);
   const vagas = linhas.flatMap((linha) => {
     const hrefs = [...String(linha.html ?? '').matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
     const link = hrefs.find((item) => /\/s\/(?:offer|job)\//i.test(item[1])) ?? hrefs[0];

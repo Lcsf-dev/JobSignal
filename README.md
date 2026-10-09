@@ -15,8 +15,8 @@ O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron
 - 🔎 **Busca automática e manual:** duas buscas diárias configuráveis e início manual a qualquer hora, com andamento acompanhado no painel.
 - 🎯 **Tipos de vaga:** estágio, trainee, júnior e analista júnior, selecionáveis individualmente; variações como “Junior”, “Jr.” e “Estagiária” são reconhecidas.
 - 🌎 **Regra fixa:** somente oportunidades de TI, remotas e disponíveis para residentes no Brasil podem ser elegíveis.
-- 🗂️ **Vagas:** separação entre elegíveis e pendentes de verificação; acompanhamento de interesse e candidatura.
-- 📈 **Histórico:** registro das buscas e de falhas por fonte.
+- 🗂️ **Vagas:** separação entre elegíveis e pendentes de verificação. Na lista de elegíveis, escolha o acompanhamento e clique em **OK**: **Nova** e **Tenho interesse** permanecem na lista; **Me candidatei** e **Descartada por mim** vão para o Histórico de vagas, de onde podem ser restauradas.
+- 📈 **Histórico:** registro das buscas e de falhas por fonte, separado do Histórico de vagas.
 - ✉️ **Avisos por e-mail:** remetente e destinatário editáveis; alertas com link original quando uma busca termina com vagas elegíveis.
 - 🔐 **Acesso pessoal:** a API exige uma chave configurada como segredo do Worker. Não há cadastro público.
 

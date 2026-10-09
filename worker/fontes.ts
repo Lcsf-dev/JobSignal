@@ -193,7 +193,8 @@ export async function coletarVagas(
     if (!reservarBrowserRun) throw new Error('Limitador de chamadas do Browser Run indisponível.');
     await reservarBrowserRun();
     const coletarPaginas = `(async () => {
-      for (let espera = 0; espera < 80 && !document.querySelector("#tableData tbody tr"); espera++) {
+      const seletorVaga = "a[href*='/s/offer/'], a[href*='/s/job/']";
+      for (let espera = 0; espera < 80 && !document.querySelector("#tableData")?.querySelector(seletorVaga); espera++) {
         await new Promise((resolver) => setTimeout(resolver, 250));
       }
       const tabela = document.querySelector("#tableData");
@@ -201,14 +202,14 @@ export async function coletarVagas(
       const anuncios = new Map();
       const coletarLinhas = () => {
         for (const linha of tabela.querySelectorAll("tbody tr")) {
-          const link = linha.querySelector("a[href*='/s/offer/']");
+          const link = linha.querySelector(seletorVaga);
           if (link) anuncios.set(link.href, { html: linha.outerHTML, text: linha.innerText });
         }
       };
       for (let pagina = 0; pagina < 20; pagina++) {
         coletarLinhas();
         const atual = document.querySelector("#tableData_paginate .current")?.textContent?.trim() || "1";
-        const assinaturaAnterior = [...tabela.querySelectorAll("tbody tr a[href*='/s/offer/']")].map((item) => item.href).join("|");
+        const assinaturaAnterior = [...tabela.querySelectorAll(seletorVaga)].map((item) => item.href).join("|");
         const proximo = document.querySelector("#tableData_next");
         if (proximo?.classList.contains("disabled")) break;
         if (proximo) proximo.click();
@@ -220,7 +221,7 @@ export async function coletarVagas(
         let paginaMudou = false;
         for (let espera = 0; espera < 40; espera++) {
           await new Promise((resolver) => setTimeout(resolver, 250));
-          const assinaturaAtual = [...tabela.querySelectorAll("tbody tr a[href*='/s/offer/']")].map((item) => item.href).join("|");
+          const assinaturaAtual = [...tabela.querySelectorAll(seletorVaga)].map((item) => item.href).join("|");
           if (assinaturaAtual && assinaturaAtual !== assinaturaAnterior) { paginaMudou = true; break; }
         }
         if (!paginaMudou) break;
@@ -228,7 +229,11 @@ export async function coletarVagas(
       coletarLinhas();
       const saida = document.createElement("pre");
       saida.id = "jobsignal-todos-resultados";
-      saida.textContent = JSON.stringify([...anuncios.values()]);
+      saida.textContent = JSON.stringify({
+        linhas: [...anuncios.values()],
+        totalLinhasTabela: tabela.querySelectorAll("tbody tr").length,
+        exemplosLinks: [...tabela.querySelectorAll("tbody tr a[href]")].slice(0, 3).map((link) => link.getAttribute("href"))
+      });
       document.body.appendChild(saida);
     })();`;
     const resposta = await browser.quickAction('scrape', {

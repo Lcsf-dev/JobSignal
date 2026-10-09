@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'descartadas' | 'historico' | 'ajustes';
+type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'descartadas' | 'historico_vagas' | 'historico' | 'ajustes';
 type Tipo = 'estagio' | 'trainee' | 'junior' | 'analista_junior';
 
 interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; incluir_pcd: boolean | number; incluir_mulheres: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
@@ -9,14 +9,15 @@ interface Execucao { id: number; prevista_em: string; iniciada_em: string; concl
 interface TarefaExecucao { id: number; fonte: string; estado: string; tentativas: number; vagas_lidas: number; vagas_novas: number; erro: string | null }
 interface Estado { configuracao: Configuracao; emailConfigurado: boolean; proximaBusca: string | null; fontesCadastradas: number; fontesAtivas: number; fontesSemIntegracao: number; fontesPausadas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
 interface Fonte { id: number; nome: string; url: string; plataforma: string; ativa: number; estado: string; ultima_consulta: string | null; ultimo_erro: string | null; total_vagas: number }
-interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; marcadores: string; acompanhamento: string; primeira_deteccao: string; publicada_em: string | null; notificada_em: string | null; fonte_nome: string }
+interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; marcadores: string; acompanhamento: string; primeira_deteccao: string; arquivada_em: string | null; publicada_em: string | null; notificada_em: string | null; fonte_nome: string }
 
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.css' })
 export class App {
-  readonly menu: { id: Aba; icone: string; nome: string }[] = [
+  readonly menu: { id: Aba; icone: string; nome: string; nomeMobile?: string }[] = [
     { id: 'painel', icone: '◈', nome: 'Painel' }, { id: 'fontes', icone: '⌁', nome: 'Sites' },
     { id: 'vagas', icone: '▣', nome: 'Vagas' }, { id: 'pendentes', icone: '◇', nome: 'Pendentes' },
-    { id: 'descartadas', icone: '⊘', nome: 'Descartadas' }, { id: 'historico', icone: '◷', nome: 'Histórico' },
+    { id: 'descartadas', icone: '⊘', nome: 'Descartadas' }, { id: 'historico_vagas', icone: '✓', nome: 'Histórico de vagas', nomeMobile: 'Hist. vagas' },
+    { id: 'historico', icone: '◷', nome: 'Histórico de buscas', nomeMobile: 'Hist. buscas' },
     { id: 'ajustes', icone: '⚙', nome: 'Ajustes' }
   ];
   readonly tipos: { id: Tipo; nome: string; exemplos: string }[] = [
@@ -38,6 +39,11 @@ export class App {
   readonly vagas = signal<Vaga[]>([]);
   readonly pendentes = signal<Vaga[]>([]);
   readonly descartadas = signal<Vaga[]>([]);
+  readonly vagasArquivadas = signal<Vaga[]>([]);
+  readonly historicoVagasTemMais = signal(false);
+  readonly historicoVagasPagina = signal(0);
+  readonly acompanhamentoSelecionado = signal<Record<number, string>>({});
+  readonly salvandoVaga = signal<number | null>(null);
   readonly historico = signal<Execucao[]>([]);
   readonly detalhesExecucao = signal<Record<number, TarefaExecucao[]>>({});
   readonly execucaoAberta = signal<number | null>(null);
@@ -84,15 +90,19 @@ export class App {
   async carregar(): Promise<void> {
     this.carregando.set(true); this.erro.set('');
     try {
-      const [estado, fontes, vagas, pendentes, descartadas, historico] = await Promise.all([
+      const [estado, fontes, vagas, pendentes, descartadas, arquivadas, historico] = await Promise.all([
         this.api<Estado>('/estado'), this.api<Fonte[]>('/fontes'), this.api<Vaga[]>('/vagas?classificacao=elegivel'),
         this.api<Vaga[]>('/vagas?classificacao=pendente'), this.api<Vaga[]>('/vagas?classificacao=descartada'),
+        this.api<Vaga[]>('/vagas?arquivadas=1'),
         this.api<Execucao[]>('/execucoes')
       ]);
       this.estado.set(estado);
       this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), incluir_pcd: Boolean(estado.configuracao.incluir_pcd), incluir_mulheres: Boolean(estado.configuracao.incluir_mulheres), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
       this.fontes.set(fontes.filter((fonte) => fonte.estado !== 'excluida'));
       this.vagas.set(vagas); this.pendentes.set(pendentes); this.descartadas.set(descartadas);
+      this.vagasArquivadas.set(arquivadas.slice(0, 100));
+      this.historicoVagasTemMais.set(arquivadas.length > 100);
+      this.historicoVagasPagina.set(0);
       this.historico.set(historico); this.conectado.set(true);
     } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); this.restaurandoSessao.set(false); }
   }
@@ -192,9 +202,56 @@ export class App {
     catch (erro) { this.falha(erro); }
   }
 
-  async acompanhar(vaga: Vaga, acompanhamento: string): Promise<void> {
-    try { await this.api(`/vagas/${vaga.id}`, { method: 'PATCH', body: JSON.stringify({ acompanhamento }) }); await this.carregar(); this.aviso.set('Acompanhamento atualizado.'); }
-    catch (erro) { this.falha(erro); }
+  selecionarAcompanhamento(vagaId: number, acompanhamento: string): void {
+    this.acompanhamentoSelecionado.set({ ...this.acompanhamentoSelecionado(), [vagaId]: acompanhamento });
+  }
+
+  acompanhamentoDaVaga(vaga: Vaga): string {
+    return this.acompanhamentoSelecionado()[vaga.id] ?? vaga.acompanhamento;
+  }
+
+  rotuloAcompanhamento(acompanhamento: string): string {
+    return ({ novo: 'Nova', interesse: 'Tenho interesse', candidatura: 'Me candidatei', descartado: 'Descartada por mim' } as Record<string, string>)[acompanhamento] ?? acompanhamento;
+  }
+
+  async confirmarVaga(vaga: Vaga): Promise<void> {
+    const acompanhamento = this.acompanhamentoDaVaga(vaga);
+    if (this.salvandoVaga() !== null) return;
+    const arquivar = acompanhamento === 'candidatura' || acompanhamento === 'descartado';
+    this.salvandoVaga.set(vaga.id);
+    try {
+      await this.api(`/vagas/${vaga.id}`, { method: 'PATCH', body: JSON.stringify({ acompanhamento, arquivar }) });
+      const selecoes = { ...this.acompanhamentoSelecionado() };
+      delete selecoes[vaga.id];
+      this.acompanhamentoSelecionado.set(selecoes);
+      await this.carregar();
+      this.aviso.set(arquivar ? 'Vaga movida para o Histórico de vagas.' : 'Acompanhamento salvo. A vaga permanece nas elegíveis.');
+    } catch (erro) { this.falha(erro); }
+    finally { this.salvandoVaga.set(null); }
+  }
+
+  async restaurarVaga(vaga: Vaga): Promise<void> {
+    if (this.salvandoVaga() !== null) return;
+    this.salvandoVaga.set(vaga.id);
+    try {
+      await this.api(`/vagas/${vaga.id}`, { method: 'PATCH', body: JSON.stringify({ acompanhamento: 'novo', arquivar: false }) });
+      await this.carregar();
+      this.aviso.set('Vaga restaurada. Ela aparecerá na lista correspondente à classificação atual.');
+    } catch (erro) { this.falha(erro); }
+    finally { this.salvandoVaga.set(null); }
+  }
+
+  async carregarMaisHistoricoVagas(): Promise<void> {
+    if (this.carregando() || !this.historicoVagasTemMais()) return;
+    this.carregando.set(true);
+    try {
+      const pagina = this.historicoVagasPagina() + 1;
+      const vagas = await this.api<Vaga[]>(`/vagas?arquivadas=1&pagina=${pagina}`);
+      this.vagasArquivadas.set([...this.vagasArquivadas(), ...vagas.slice(0, 100)]);
+      this.historicoVagasTemMais.set(vagas.length > 100);
+      this.historicoVagasPagina.set(pagina);
+    } catch (erro) { this.falha(erro); }
+    finally { this.carregando.set(false); }
   }
 
   data(valor: string | null | undefined): string {

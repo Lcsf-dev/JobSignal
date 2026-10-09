@@ -155,3 +155,38 @@ test('normaliza as linhas renderizadas no portal público da NTT DATA', () => {
   assert.match(vaga?.localidade ?? '', /Brasil/);
 });
 
+test('aceita o formato de coleta paginada e links alternativos da NTT DATA', () => {
+  const resposta = { success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
+    text: JSON.stringify({ linhas: [{
+      html: '<tr><td><a href="/s/job/456">Pessoa Analista Júnior</a></td></tr>',
+      text: 'Pessoa Analista Júnior\nRemoto'
+    }], totalLinhasTabela: 1, exemplosLinks: ['/s/job/456'] })
+  }] }] };
+  const [vaga] = extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs');
+  assert.equal(vaga?.idExterno, '456');
+  assert.equal(vaga?.titulo, 'Pessoa Analista Júnior');
+});
+
+test('o Browser Run da NTT DATA espera links de vagas antes de coletar', async () => {
+  let roteiro = '';
+  const navegador = { async quickAction(_acao: string, opcoes: { addScriptTag?: Array<{ content: string }> }) {
+    roteiro = opcoes.addScriptTag?.[0]?.content ?? '';
+    return new Response(JSON.stringify({ success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
+      text: JSON.stringify({ linhas: [{ html: '<a href="/s/job/456">Vaga Júnior</a>', text: 'Vaga Júnior' }] })
+    }] }] }), { headers: { 'Content-Type': 'application/json' } });
+  } } as unknown as BrowserRun;
+  const vagas = await coletarVagas(identificarOrigem('https://careers.emeal.nttdata.com/s/jobs'), 'NTT DATA', navegador, async () => {});
+  assert.doesNotThrow(() => new Function(roteiro));
+  assert.match(roteiro, /querySelector\(seletorVaga\)/);
+  assert.match(roteiro, /\/s\/job\//);
+  assert.equal(vagas[0]?.idExterno, '456');
+});
+
+test('explica quando a tabela da NTT DATA carrega sem anúncios', () => {
+  const resposta = { success: true, result: [{ selector: '#jobsignal-todos-resultados', results: [{
+    text: JSON.stringify({ linhas: [], totalLinhasTabela: 1, exemplosLinks: [] })
+  }] }] };
+  assert.throws(() => extrairVagasNttData(resposta, 'NTT DATA', 'https://careers.emeal.nttdata.com/s/jobs'),
+    /Linhas na tabela: 1\. Links encontrados: nenhum/);
+});
+

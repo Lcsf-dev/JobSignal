@@ -28,7 +28,7 @@
       <div class="sidebar-footer"><span>● Sistema pessoal</span><button type="button" (click)="sair()">Sair da sessão ↗</button></div>
     </aside>
     <div class="main-shell">
-      <header class="topbar"><img class="mobile-logo" src="/jobsignal-logo.png" alt="JobSignal" /><span class="breadcrumb">JobSignal <b>/</b> {{ aba() === 'ajustes' ? 'Ajustes' : aba() === 'fontes' ? 'Sites monitorados' : aba() === 'pendentes' ? 'Pendentes' : aba() === 'descartadas' ? 'Descartadas' : aba() === 'historico' ? 'Histórico' : aba() === 'vagas' ? 'Vagas' : 'Painel' }}</span><button type="button" class="refresh" aria-label="Atualizar dados" title="Atualizar dados" (click)="atualizarDados()" [disabled]="carregando()" [class.girando]="carregando()" [attr.aria-busy]="carregando()">↻</button></header>
+      <header class="topbar"><img class="mobile-logo" src="/jobsignal-logo.png" alt="JobSignal" /><span class="breadcrumb">JobSignal <b>/</b> {{ aba() === 'ajustes' ? 'Ajustes' : aba() === 'fontes' ? 'Sites monitorados' : aba() === 'pendentes' ? 'Pendentes' : aba() === 'descartadas' ? 'Descartadas' : aba() === 'historico_vagas' ? 'Histórico de vagas' : aba() === 'historico' ? 'Histórico de buscas' : aba() === 'vagas' ? 'Vagas' : 'Painel' }}</span><button type="button" class="refresh" aria-label="Atualizar dados" title="Atualizar dados" (click)="atualizarDados()" [disabled]="carregando()" [class.girando]="carregando()" [attr.aria-busy]="carregando()">↻</button></header>
       <main class="conteudo">
         @if (erro()) { <div class="mensagem erro" role="alert">{{ erro() }} <button type="button" (click)="erro.set('')">×</button></div> }
         @if (aviso()) { <div class="mensagem sucesso" role="status">{{ aviso() }} <button type="button" (click)="aviso.set('')">×</button></div> }
@@ -47,7 +47,30 @@
 
         @if (aba() === 'vagas' || aba() === 'pendentes' || aba() === 'descartadas') {
           <div class="page-heading"><div><div class="sobretitulo">{{ aba() === 'vagas' ? 'OPORTUNIDADES ENCONTRADAS' : aba() === 'pendentes' ? 'REVISÃO MANUAL' : 'FORA DOS CRITÉRIOS' }}</div><h1>{{ aba() === 'vagas' ? 'Vagas elegíveis' : aba() === 'pendentes' ? 'Vagas pendentes' : 'Vagas descartadas' }}<span>.</span></h1><p>{{ aba() === 'vagas' ? 'Vagas de TI iniciais, remotas e disponíveis no Brasil.' : aba() === 'pendentes' ? 'Confira o anúncio para confirmar os critérios que faltam.' : 'Veja qual informação do anúncio fez cada vaga sair do monitoramento.' }}</p></div></div>
-          <div class="lista-vagas">@for (vaga of aba() === 'vagas' ? vagas() : aba() === 'pendentes' ? pendentes() : descartadas(); track vaga.id) { <article class="card vaga-card"><div class="vaga-header"><span class="avatar grande">{{ vaga.empresa.charAt(0).toUpperCase() }}</span><div><div class="sobretitulo">{{ vaga.fonte_nome }}</div><h2>{{ vaga.titulo }}</h2><p>{{ vaga.empresa }} · {{ vaga.localidade || 'Localidade não informada' }}</p></div></div><div class="tags">@if (vaga.notificada_em) { <span class="chip novidade">Nova oportunidade</span> }@if (vaga.marcadores?.includes('pcd')) { <span class="chip afirmativa">Vaga afirmativa para PcD</span> }@if (vaga.marcadores?.includes('mulheres')) { <span class="chip afirmativa">Vaga afirmativa para mulheres</span> }<span class="chip">{{ vaga.tipo || 'Nível a verificar' }}</span><span class="chip" [class.alerta]="vaga.classificacao !== 'elegivel'">{{ vaga.classificacao }}</span>@if (vaga.publicada_em) { <span class="chip">Publicada em {{ data(vaga.publicada_em) }}</span> }<span class="chip">Encontrada em {{ data(vaga.primeira_deteccao) }}</span></div><p class="vaga-motivo">@if (vaga.classificacao === 'pendente') { <strong>O que falta confirmar:</strong> } @else if (vaga.classificacao === 'descartada') { <strong>Por que foi descartada:</strong> } {{ vaga.motivo }}</p><div class="vaga-footer"><a class="botao secundario" [href]="vaga.url" target="_blank" rel="noopener noreferrer">{{ vaga.classificacao === 'pendente' ? 'Conferir anúncio original ↗' : 'Abrir anúncio original ↗' }}</a>@if (aba() === 'vagas') { <select [value]="vaga.acompanhamento" (change)="acompanhar(vaga, $any($event.target).value)" [attr.aria-label]="'Acompanhamento de ' + vaga.titulo"><option value="novo">Nova</option><option value="interesse">Tenho interesse</option><option value="candidatura">Me candidatei</option><option value="descartado">Descartada por mim</option></select> }</div></article> } @empty { <section class="card vazio-grande"><b>✦</b><h2>Nenhuma vaga por aqui ainda</h2><p>Os resultados aparecerão após as próximas consultas.</p></section> }</div>
+          <div class="lista-vagas">
+            @for (vaga of aba() === 'vagas' ? vagas() : aba() === 'pendentes' ? pendentes() : descartadas(); track vaga.id) {
+              <article class="card vaga-card">
+                <div class="vaga-header"><span class="avatar grande">{{ vaga.empresa.charAt(0).toUpperCase() }}</span><div><div class="sobretitulo">{{ vaga.fonte_nome }}</div><h2>{{ vaga.titulo }}</h2><p>{{ vaga.empresa }} · {{ vaga.localidade || 'Localidade não informada' }}</p></div></div>
+                <div class="tags">@if (vaga.notificada_em) { <span class="chip novidade">Nova oportunidade</span> }@if (vaga.marcadores?.includes('pcd')) { <span class="chip afirmativa">Vaga afirmativa para PcD</span> }@if (vaga.marcadores?.includes('mulheres')) { <span class="chip afirmativa">Vaga afirmativa para mulheres</span> }<span class="chip">{{ vaga.tipo || 'Nível a verificar' }}</span><span class="chip" [class.alerta]="vaga.classificacao !== 'elegivel'">{{ vaga.classificacao }}</span>@if (vaga.publicada_em) { <span class="chip">Publicada em {{ data(vaga.publicada_em) }}</span> }<span class="chip">Encontrada em {{ data(vaga.primeira_deteccao) }}</span></div>
+                <p class="vaga-motivo">@if (vaga.classificacao === 'pendente') { <strong>O que falta confirmar:</strong> } @else if (vaga.classificacao === 'descartada') { <strong>Por que foi descartada:</strong> } {{ vaga.motivo }}</p>
+                <div class="vaga-footer"><a class="botao secundario" [href]="vaga.url" target="_blank" rel="noopener noreferrer">{{ vaga.classificacao === 'pendente' ? 'Conferir anúncio original ↗' : 'Abrir anúncio original ↗' }}</a>@if (aba() === 'vagas') { <div class="vaga-acoes"><select [value]="acompanhamentoDaVaga(vaga)" (change)="selecionarAcompanhamento(vaga.id, $any($event.target).value)" [attr.aria-label]="'Acompanhamento de ' + vaga.titulo"><option value="novo">Nova</option><option value="interesse">Tenho interesse</option><option value="candidatura">Me candidatei</option><option value="descartado">Descartada por mim</option></select><button type="button" class="botao primario" (click)="confirmarVaga(vaga)" [disabled]="salvandoVaga() !== null">{{ salvandoVaga() === vaga.id ? 'Salvando…' : 'OK' }}</button></div> }</div>
+              </article>
+            } @empty { <section class="card vazio-grande"><b>✦</b><h2>Nenhuma vaga por aqui ainda</h2><p>Os resultados aparecerão após as próximas consultas.</p></section> }
+          </div>
+        }
+
+        @if (aba() === 'historico_vagas') {
+          <div class="page-heading"><div><div class="sobretitulo">ACOMPANHAMENTO</div><h1>Histórico de vagas<span>.</span></h1><p>Vagas em que você se candidatou ou decidiu descartar. Você pode restaurá-las.</p></div></div>
+          <div class="lista-vagas">
+            @for (vaga of vagasArquivadas(); track vaga.id) {
+              <article class="card vaga-card">
+                <div class="vaga-header"><span class="avatar grande">{{ vaga.empresa.charAt(0).toUpperCase() }}</span><div><div class="sobretitulo">{{ vaga.fonte_nome }}</div><h2>{{ vaga.titulo }}</h2><p>{{ vaga.empresa }} · {{ vaga.localidade || 'Localidade não informada' }}</p></div></div>
+                <div class="tags"><span class="chip">{{ rotuloAcompanhamento(vaga.acompanhamento) }}</span><span class="chip">Arquivada em {{ data(vaga.arquivada_em) }}</span><span class="chip">Encontrada em {{ data(vaga.primeira_deteccao) }}</span></div>
+                <div class="vaga-footer"><a class="botao secundario" [href]="vaga.url" target="_blank" rel="noopener noreferrer">Abrir anúncio original ↗</a><button type="button" class="botao texto" (click)="restaurarVaga(vaga)" [disabled]="salvandoVaga() !== null">{{ salvandoVaga() === vaga.id ? 'Restaurando…' : 'Restaurar vaga' }}</button></div>
+              </article>
+            } @empty { <section class="card vazio-grande"><b>◷</b><h2>Nenhuma vaga no histórico</h2><p>Ao confirmar “Me candidatei” ou “Descartada por mim”, a vaga aparecerá aqui.</p></section> }
+          </div>
+          @if (historicoVagasTemMais()) { <div class="historico-vagas-mais"><button type="button" class="botao secundario" (click)="carregarMaisHistoricoVagas()" [disabled]="carregando()">{{ carregando() ? 'Carregando…' : 'Carregar mais vagas' }}</button></div> }
         }
 
         @if (aba() === 'historico') {
@@ -59,6 +82,6 @@
         }
       </main>
     </div>
-    <nav class="mobile-nav" aria-label="Navegação móvel">@for (item of menu; track item.id) { <button type="button" [class.ativo]="aba() === item.id" (click)="mudarAba(item.id)"><span>{{ item.icone }}</span><small>{{ item.nome }}</small></button> }</nav>
+    <nav class="mobile-nav" aria-label="Navegação móvel">@for (item of menu; track item.id) { <button type="button" [class.ativo]="aba() === item.id" (click)="mudarAba(item.id)"><span>{{ item.icone }}</span><small>{{ item.nomeMobile ?? item.nome }}</small></button> }</nav>
   </div>
 }
