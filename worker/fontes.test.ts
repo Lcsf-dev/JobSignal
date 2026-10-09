@@ -4,7 +4,7 @@ import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fonte
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasApinfo,
   extrairVagasCatho, extrairVagasCiandt, extrairVagasGeekHunter, extrairVagasGupy,
-  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom,
+  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom, reconstruirHtmlRaspado,
   textoDaPagina
 } from './fontes-html.ts';
 
@@ -103,6 +103,42 @@ test('extrai anúncios das listagens públicas dos sete portais estáticos resta
   assert.equal(extrairVagasNerdin(nerdin, 'Nerdin', 'https://www.nerdin.com.br/vagas.php')[0]?.idExterno, '99636');
   assert.equal(extrairVagasGeekHunter(geekhunter, 'GeekHunter', 'https://www.geekhunter.com/pt/vagas')[0]?.titulo, 'Estágio Desenvolvedor');
   assert.equal(extrairVagasVagasCom(vagasCom, 'Vagas.com', 'https://www.vagas.com.br/vagas-de-ti')[0]?.idExterno, '2835175');
+});
+
+test('reconstrói os cartões internos do Browser Run para Catho e APInfo', () => {
+  const cathoHtml = reconstruirHtmlRaspado('catho', [{
+    html: '<article><h2 class=\"title_offer\"><a href=\"/vagas/estagio-ti/38669900\">Estágio em TI</a></h2><p>Remoto</p></article>',
+    attributes: [{ name: 'data-offer-item', value: '38669900' }]
+  }]);
+  const vagaCatho = extrairVagasCatho(cathoHtml, 'Catho', 'https://www.catho.com.br/vagas/ti/');
+  assert.equal(vagaCatho[0]?.idExterno, '38669900');
+  assert.equal(vagaCatho[0]?.titulo, 'Estágio em TI');
+
+  const apinfoHtml = reconstruirHtmlRaspado('apinfo', [{
+    html: '<div class=\"cargo m-tb\">Anal<span class=\"highlight\"></span>ista Júnior</div><div>Home Office</div><a href=\"https://www.apinfo.com/apinfo/inc/enviecv.cfm?codvaga=85904&amp;pkey=teste\">Candidatar</a>'
+  }]);
+  const vagaApinfo = extrairVagasApinfo(apinfoHtml, 'APInfo', 'https://www.apinfo.com/apinfo/inc/list4.cfm');
+  assert.equal(vagaApinfo[0]?.idExterno, '85904');
+  assert.equal(vagaApinfo[0]?.titulo, 'Analista Júnior');
+  assert.match(vagaApinfo[0]?.localidade ?? '', /Home Office/);
+});
+
+test('consulta Catho com agente identificado e lê vagas sem usar Browser Run', async () => {
+  const url = 'https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/';
+  const html = '<li data-offer-item=\"38669900\"><article><h2 class=\"title_offer\"><a href=\"/vagas/estagio-ti/38669900\">Estágio em TI</a></h2><p>Remoto</p></article></li>';
+  const fetchAnterior = globalThis.fetch;
+  let agenteRecebido = '';
+  globalThis.fetch = (async (_entrada: RequestInfo | URL, opcoes?: RequestInit) => {
+    agenteRecebido = new Headers(opcoes?.headers).get('User-Agent') ?? '';
+    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+  }) as typeof fetch;
+  try {
+    const vagas = await coletarVagas(identificarOrigem(url), 'Catho');
+    assert.ok(agenteRecebido.startsWith('Mozilla/5.0 (compatible; JobSignal/1.0'));
+    assert.equal(vagas[0]?.titulo, 'Estágio em TI');
+  } finally {
+    globalThis.fetch = fetchAnterior;
+  }
 });
 
 test('normaliza as linhas renderizadas no portal público da NTT DATA', () => {

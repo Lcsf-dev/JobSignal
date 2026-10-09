@@ -2,8 +2,12 @@ import type { VagaColetada } from './classificador';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut,
   extrairVagasApinfo, extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
-  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom, textoDaPagina
+  extrairVagasInfojobs, extrairVagasNerdin, extrairVagasNttData, extrairVagasVagasCom,
+  reconstruirHtmlRaspado, textoDaPagina
 } from './fontes-html.ts';
+
+const agenteCatho = 'Mozilla/5.0 (compatible; JobSignal/1.0; +https://github.com/Lcsf-dev/JobSignal)';
+type ReservarBrowserRun = () => Promise<void>;
 
 export interface OrigemIdentificada {
   plataforma: 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'gupy' | 'infojobs' | 'catho' | 'apinfo' | 'nerdin' | 'geekhunter' | 'vagas' | 'nttdata' | 'pendente';
@@ -47,13 +51,13 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
   return { plataforma: 'pendente', identificador: null, url: url.toString() };
 }
 
-async function obterTexto(url: string, tipo: 'json' | 'html' = 'json'): Promise<string> {
+async function obterTexto(url: string, tipo: 'json' | 'html' = 'json', agente = 'JobSignal/1.0 (monitor pessoal de vagas)'): Promise<string> {
   let endereco = new URL(url);
   const hostOriginal = endereco.hostname;
   const hostsPermitidos = new Set([hostOriginal, hostOriginal.startsWith('www.') ? hostOriginal.slice(4) : `www.${hostOriginal}`]);
   for (let redirecionamentos = 0; redirecionamentos <= 3; redirecionamentos++) {
     const resposta = await fetch(endereco, { headers: {
-      Accept: tipo === 'json' ? 'application/json' : 'text/html', 'User-Agent': 'JobSignal/1.0 (monitor pessoal de vagas)'
+      Accept: tipo === 'json' ? 'application/json' : 'text/html', 'User-Agent': agente
     }, redirect: 'manual', signal: AbortSignal.timeout(25000) });
     if (resposta.status >= 300 && resposta.status < 400) {
       const destino = resposta.headers.get('location');
@@ -79,10 +83,13 @@ async function obterJson(url: string): Promise<unknown> {
   return JSON.parse(await obterTexto(url));
 }
 
-async function rasparComBrowserRun(browser: BrowserRun, plataforma: 'catho' | 'apinfo', url: string): Promise<string> {
-  const ordem: Record<typeof plataforma, number> = { catho: 1, apinfo: 2 };
-  // Browser Run aceita uma chamada de ação rápida a cada 10 s por conta.
-  await new Promise((resolver) => setTimeout(resolver, ordem[plataforma] * 12000));
+async function rasparComBrowserRun(
+  browser: BrowserRun,
+  plataforma: 'catho' | 'apinfo',
+  url: string,
+  reservar: ReservarBrowserRun
+): Promise<string> {
+  await reservar();
   const formularioApinfo = `( () => {
     const formulario = document.querySelector("#form-busca");
     const homeOffice = formulario?.querySelector('input[name="estado[]"][value="HO"]');
@@ -91,6 +98,7 @@ async function rasparComBrowserRun(browser: BrowserRun, plataforma: 'catho' | 'a
   const resposta = await browser.quickAction('scrape', {
     url,
     ...(plataforma === 'apinfo' ? { addScriptTag: [{ content: formularioApinfo }] } : {}),
+    ...(plataforma === 'catho' ? { userAgent: agenteCatho } : {}),
     waitForSelector: { selector: plataforma === 'catho' ? 'li[data-offer-item]' : 'div.box-vagas.linha.pd', timeout: 50000 },
     gotoOptions: { waitUntil: 'networkidle2', timeout: 45000 },
     elements: [{ selector: plataforma === 'catho' ? 'li[data-offer-item]' : 'div.box-vagas.linha.pd' }]
@@ -99,10 +107,16 @@ async function rasparComBrowserRun(browser: BrowserRun, plataforma: 'catho' | 'a
     const detalhe = await resposta.text();
     throw new Error(`Browser Run ${plataforma === 'catho' ? 'Catho' : 'APInfo'} respondeu HTTP ${resposta.status}${detalhe ? `: ${detalhe.slice(0, 200)}` : '.'}`);
   }
-  const dados = await resposta.json() as { success?: boolean; errors?: { message?: string }; result?: Array<{ results?: Array<{ html?: string }> }> };
+  const dados = await resposta.json() as {
+    success?: boolean;
+    errors?: { message?: string };
+    result?: Array<{ results?: Array<{ html?: string; attributes?: Array<{ name?: string; value?: string }> }> }>;
+  };
   if (!dados.success) throw new Error(`Browser Run: ${dados.errors?.message ?? 'não foi possível carregar a listagem.'}`);
-  const html = dados.result?.[0]?.results?.map((item) => item.html ?? '').join('') ?? '';
-  if (!html) throw new Error(`A listagem ${plataforma === 'catho' ? 'Catho' : 'APInfo'} não retornou anúncios renderizados.`);
+  const html = reconstruirHtmlRaspado(plataforma, dados.result?.[0]?.results ?? []);
+  if (!html) throw new Error(plataforma === 'catho'
+    ? 'A Catho não retornou cartões de vagas com identificador no Browser Run.'
+    : 'A APInfo não retornou cartões de vagas no Browser Run.');
   return html;
 }
 
@@ -168,9 +182,16 @@ async function coletarVagasLever(identificador: string, empresa: string): Promis
   throw new Error('A listagem Lever excedeu 300 vagas; a consulta foi interrompida com segurança.');
 }
 
-export async function coletarVagas(origem: OrigemIdentificada, empresa: string, browser?: BrowserRun): Promise<VagaColetada[]> {
+export async function coletarVagas(
+  origem: OrigemIdentificada,
+  empresa: string,
+  browser?: BrowserRun,
+  reservarBrowserRun?: ReservarBrowserRun
+): Promise<VagaColetada[]> {
   if (origem.plataforma === 'nttdata') {
     if (!browser) throw new Error('Serviço Browser Run indisponível para renderizar o portal da NTT DATA.');
+    if (!reservarBrowserRun) throw new Error('Limitador de chamadas do Browser Run indisponível.');
+    await reservarBrowserRun();
     const coletarPaginas = `(async () => {
       for (let espera = 0; espera < 80 && !document.querySelector("#tableData tbody tr"); espera++) {
         await new Promise((resolver) => setTimeout(resolver, 250));
@@ -225,15 +246,19 @@ export async function coletarVagas(origem: OrigemIdentificada, empresa: string, 
   }
   if (origem.plataforma === 'apinfo') {
     if (!browser) throw new Error('Serviço Browser Run indisponível para consultar a APInfo.');
-    return extrairVagasApinfo(await rasparComBrowserRun(browser, 'apinfo', 'https://www.apinfo.com/apinfo/inc/list4.cfm'), empresa, origem.url);
+    if (!reservarBrowserRun) throw new Error('Limitador de chamadas do Browser Run indisponível.');
+    return extrairVagasApinfo(await rasparComBrowserRun(
+      browser, 'apinfo', 'https://www.apinfo.com/apinfo/inc/list4.cfm', reservarBrowserRun
+    ), empresa, origem.url);
   }
   if (origem.plataforma === 'catho') {
     try {
-      return extrairVagasCatho(await obterTexto(origem.url, 'html'), empresa, origem.url);
+      return extrairVagasCatho(await obterTexto(origem.url, 'html', agenteCatho), empresa, origem.url);
     } catch (erro) {
-      if (!(erro instanceof Error) || !/HTTP 403|HTTP 500|timeout|aborted/i.test(erro.message)) throw erro;
-      if (!browser) throw erro;
-      return extrairVagasCatho(await rasparComBrowserRun(browser, 'catho', origem.url), empresa, origem.url);
+      const deveTentarBrowserRun = erro instanceof Error
+        && /HTTP 403|HTTP 429|HTTP 5\d\d|timeout|aborted|Listagem da Catho não encontrada no formato esperado/i.test(erro.message);
+      if (!deveTentarBrowserRun || !browser || !reservarBrowserRun) throw erro;
+      return extrairVagasCatho(await rasparComBrowserRun(browser, 'catho', origem.url, reservarBrowserRun), empresa, origem.url);
     }
   }
   if (['gupy', 'infojobs', 'nerdin', 'geekhunter', 'vagas'].includes(origem.plataforma)) {

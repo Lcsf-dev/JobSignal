@@ -9,6 +9,8 @@ Informe o nome da empresa e a URL da **página que lista suas vagas**. Exemplos 
 
 Greenhouse e Lever usam as APIs públicas das plataformas. A página de carreiras da CI&T é consultada pela API pública do Lever, com paginação. Também há adaptadores para CWI e listagens públicas da Recrut.ai e da Remotar. A Remotar fornece uma data de cadastro, que é exibida separada da primeira detecção feita pelo JobSignal. Listagens públicas de Gupy, InfoJobs, Catho, APInfo, Nerdin, GeekHunter e Vagas.com têm extratores próprios; a APInfo é pesquisada pelo filtro Home Office.
 
+A Catho é consultada primeiro pela listagem HTML pública e usa o Browser Run como alternativa quando a página não pode ser lida diretamente. A APInfo usa o Browser Run para aplicar Home Office e coletar os cartões exibidos. As chamadas do Browser Run são espaçadas por um limitador persistido no D1 do JobSignal para evitar concorrência entre as fontes deste projeto.
+
 O endereço `careers.emeal.nttdata.com/s/jobs` é o portal EMEAL da NTT DATA e carrega resultados dinamicamente no navegador. O JobSignal usa o Browser Run da Cloudflare para renderizar a tabela e percorrer as páginas de resultados; o endereço público foi testado e exibiu vagas do Brasil. O domínio `careers.nttdata.com` é outro portal, de outra plataforma, e não deve ser confundido com o EMEAL. Uma URL fora das plataformas e caminhos reconhecidos permanece em integração pendente. Não há coletor universal para sites com login, CAPTCHA ou páginas que dependem de navegador completo; bloqueios e mudanças dos próprios sites são registrados como falha da fonte.
 
 ## 🎯 Elegibilidade

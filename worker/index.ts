@@ -38,6 +38,7 @@ interface Fonte {
 
 const tiposPermitidos: TipoVaga[] = ['estagio', 'trainee', 'junior', 'analista_junior'];
 const cabecalhos = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const intervaloBrowserRunMs = 12_000;
 
 function resposta(dados: unknown, status = 200): Response {
   return new Response(JSON.stringify(dados), { status, headers: cabecalhos });
@@ -49,6 +50,20 @@ function compararToken(recebido: string, esperado: string): boolean {
   let diferenca = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++) diferenca |= (a[i] ?? 0) ^ (b[i] ?? 0);
   return diferenca === 0;
+}
+
+async function reservarChamadaBrowserRun(db: D1Database): Promise<void> {
+  for (;;) {
+    const agora = Date.now();
+    const reserva = await db.prepare('UPDATE browser_run_rate_limit SET proxima_chamada_em = ? WHERE id = 1 AND proxima_chamada_em <= ?')
+      .bind(agora + intervaloBrowserRunMs, agora).run();
+    if (reserva.meta.changes > 0) return;
+
+    const limite = await db.prepare('SELECT proxima_chamada_em FROM browser_run_rate_limit WHERE id = 1')
+      .first<{ proxima_chamada_em: number }>();
+    if (!limite) throw new Error('Limitador do Browser Run ausente. Aplique as migrações do JobSignal.');
+    await new Promise((resolver) => setTimeout(resolver, Math.max(100, limite.proxima_chamada_em - Date.now())));
+  }
 }
 
 async function corpoJson(request: Request): Promise<Record<string, unknown>> {
@@ -242,7 +257,7 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
   let novas = 0;
   try {
     const origem = identificarOrigem(tarefa.url);
-    const vagas = await coletarVagas(origem, tarefa.nome, env.BROWSER);
+    const vagas = await coletarVagas(origem, tarefa.nome, env.BROWSER, () => reservarChamadaBrowserRun(env.DB));
     const configuracao = await configuracaoAtual(env.DB);
     const tipos = JSON.parse(configuracao.tipos) as TipoVaga[];
     for (const vaga of vagas) {
@@ -274,7 +289,11 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
     await env.DB.prepare(`UPDATE fontes SET estado = 'erro', ultima_tentativa = CURRENT_TIMESTAMP, ultimo_erro = ? WHERE id = ?`)
       .bind(mensagem, tarefa.fonte_id).run();
     await concluirTarefa(env, tarefaId, tarefa.execucao_id, 'erro', mensagem, lidas, novas);
-    if (tarefa.tentativas < 2) throw new Error(mensagem);
+    const erroBrowserRun = /Browser Run/i.test(mensagem);
+    const cotaDiariaEsgotada = erroBrowserRun && /Browser time limit exceeded for today/i.test(mensagem);
+    const limiteDeChamadas = erroBrowserRun && /HTTP\s*429|rate limit exceeded/i.test(mensagem);
+    const maximoTentativas = cotaDiariaEsgotada ? 1 : limiteDeChamadas ? 2 : 3;
+    if (tarefa.tentativas + 1 < maximoTentativas) throw new Error(mensagem);
   }
 }
 
@@ -420,7 +439,8 @@ export default {
         mensagem.ack();
       } catch (erro) {
         console.error('Falha da tarefa', erro);
-        mensagem.retry({ delaySeconds: 60 });
+        const detalhe = erro instanceof Error ? erro.message : '';
+        mensagem.retry({ delaySeconds: /Browser Run.*(?:HTTP\s*429|rate limit exceeded)/i.test(detalhe) ? 20 : 60 });
       }
     }
   }

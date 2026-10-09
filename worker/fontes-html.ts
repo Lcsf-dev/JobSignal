@@ -34,6 +34,20 @@ function valorDaClasse(html: string, classe: string): string {
   return textoDaPagina(html.match(new RegExp(`<[^>]+class=["'][^"']*\\b${escapar}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/[^>]+>`, 'i'))?.[1] ?? '');
 }
 
+export function reconstruirHtmlRaspado(
+  plataforma: 'catho' | 'apinfo',
+  elementos: Array<{ html?: string; attributes?: Array<{ name?: string; value?: string }> }>
+): string {
+  return elementos.map((elemento) => {
+    const html = elemento.html ?? '';
+    if (!html) return '';
+    if (plataforma === 'apinfo') return '<div class="box-vagas linha pd">' + html + '</div>';
+    const identificador = elemento.attributes?.find((atributo) => atributo.name === 'data-offer-item')?.value;
+    return identificador && /^\d{1,20}$/.test(identificador)
+      ? '<li data-offer-item="' + identificador + '">' + html + '</li>' : '';
+  }).join('');
+}
+
 function vagasDoJsonGupy(html: string): Record<string, unknown>[] {
   const script = html.match(/<script\b[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
   if (!script) return [];
@@ -109,7 +123,13 @@ export function extrairVagasApinfo(html: string, empresa: string, base: string):
     const href = bloco.match(/<a\b[^>]*href=["']([^"']*enviecv\.cfm\?[^"']*codvaga=(\d+)[^"']*)["']/i);
     const url = href ? normalizarLink(href[1], base) : null;
     if (!href || !url) return [];
-    const titulo = valorDaClasse(bloco, 'cargo') || textoDaPagina(bloco.match(/<h[23]\b[^>]*>([\s\S]*?)<\/h[23]>/i)?.[1] ?? '');
+    const cargo = bloco.match(/<div\b(?=[^>]*class=["'][^"']*\bcargo\b)[^>]*>([\s\S]*?)<\/div>/i)?.[1] ?? '';
+    const cargoSemMarcadores = cargo
+      .replace(/<span\b(?=[^>]*class=["'][^"']*\bhighlight\b)[^>]*>\s*<\/span>/gi, '')
+      .replace(/<[^>]*>/g, '');
+    const titulo = textoDaPagina(cargoSemMarcadores)
+      || valorDaClasse(bloco, 'cargo')
+      || textoDaPagina(bloco.match(/<h[23]\b[^>]*>([\s\S]*?)<\/h[23]>/i)?.[1] ?? '');
     const texto = textoDaPagina(bloco).slice(0, 3000);
     if (!titulo) return [];
     return [{ idExterno: href[2], titulo, empresa, url, localidade: `${texto} · Brasil`, descricao: texto }];
