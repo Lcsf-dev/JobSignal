@@ -6,7 +6,7 @@ import {
   reconstruirHtmlRaspado, textoDaPagina
 } from './fontes-html.ts';
 
-const agenteCatho = 'Mozilla/5.0 (compatible; JobSignal/1.0; +https://github.com/Lcsf-dev/JobSignal)';
+const agenteCatho = 'Mozilla/5.0 (compatible; JobSignal/1.0)';
 type ReservarBrowserRun = () => Promise<void>;
 
 export interface OrigemIdentificada {

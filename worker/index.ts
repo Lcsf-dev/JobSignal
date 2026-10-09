@@ -40,7 +40,15 @@ interface Fonte {
 }
 
 const tiposPermitidos: TipoVaga[] = ['estagio', 'trainee', 'junior', 'analista_junior'];
-const cabecalhos = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const cabecalhos = {
+  'Content-Type': 'application/json; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'X-Robots-Tag': 'noindex, nofollow',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+};
 const intervaloBrowserRunMs = 12_000;
 
 function resposta(dados: unknown, status = 200): Response {
