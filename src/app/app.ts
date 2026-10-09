@@ -4,9 +4,9 @@ import { FormsModule } from '@angular/forms';
 type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'historico' | 'ajustes';
 type Tipo = 'estagio' | 'trainee' | 'junior' | 'analista_junior';
 
-interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number }
-interface Execucao { id: number; prevista_em: string; iniciada_em: string; concluida_em: string | null; estado: string; total_fontes: number; concluida_fontes: number; erros: number }
-interface Estado { configuracao: Configuracao; proximaBusca: string | null; fontesAtivas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
+interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
+interface Execucao { id: number; prevista_em: string; iniciada_em: string; concluida_em: string | null; estado: string; total_fontes: number; concluida_fontes: number; erros: number; email_estado?: string; email_erro?: string | null; email_total_vagas?: number }
+interface Estado { configuracao: Configuracao; emailConfigurado: boolean; proximaBusca: string | null; fontesAtivas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
 interface Fonte { id: number; nome: string; url: string; plataforma: string; ativa: number; estado: string; ultima_consulta: string | null; ultimo_erro: string | null; total_vagas: number }
 interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; acompanhamento: string; primeira_deteccao: string; notificada_em: string | null; fonte_nome: string }
 
@@ -37,7 +37,7 @@ export class App {
   nomeFonte = '';
   urlFonte = '';
   fonteEmEdicao: number | null = null;
-  configuracao: Configuracao = { horario_manha: '10:00', horario_noite: '22:00', tipos: ['estagio', 'trainee', 'junior', 'analista_junior'], pausado: false };
+  configuracao: Configuracao = { horario_manha: '10:00', horario_noite: '22:00', tipos: ['estagio', 'trainee', 'junior', 'analista_junior'], pausado: false, email_remetente: 'yugi.lucas@gmail.com', email_destinatario: 'lucas.lcsf.dev@gmail.com', email_ativo: true };
 
   constructor() {
     this.token = sessionStorage.getItem('jobsignal_token') ?? '';
@@ -73,7 +73,7 @@ export class App {
         this.api<Vaga[]>('/vagas?classificacao=pendente'), this.api<Execucao[]>('/execucoes')
       ]);
       this.estado.set(estado);
-      this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), tipos: [...estado.configuracao.tipos] };
+      this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
       this.fontes.set(fontes.filter((fonte) => fonte.estado !== 'excluida'));
       this.vagas.set(vagas); this.pendentes.set(pendentes); this.historico.set(historico); this.conectado.set(true);
     } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); }
@@ -114,9 +114,23 @@ export class App {
     catch (erro) { this.falha(erro); }
   }
 
+  buscaEmAndamento(): boolean { return ['pendente', 'em_andamento'].includes(this.estado()?.ultimaExecucao?.estado ?? ''); }
+
   async executarAgora(): Promise<void> {
-    if (!confirm('Iniciar uma busca manual nos sites ativos?')) return;
-    try { await this.api('/executar', { method: 'POST' }); await this.carregar(); this.aviso.set('Busca iniciada. Atualize o painel para acompanhar.'); }
+    try { await this.api('/executar', { method: 'POST' }); await this.carregar(); this.aviso.set('Busca manual iniciada. O painel atualizará o andamento automaticamente.'); void this.atualizarBusca(); }
+    catch (erro) { this.falha(erro); }
+  }
+
+  private async atualizarBusca(): Promise<void> {
+    for (let tentativa = 0; tentativa < 90; tentativa++) {
+      await new Promise((resolver) => setTimeout(resolver, 4000));
+      await this.carregar();
+      if (!this.buscaEmAndamento()) return;
+    }
+  }
+
+  async testarEmail(): Promise<void> {
+    try { await this.api('/email/testar', { method: 'POST' }); this.aviso.set(`E-mail de teste enviado para ${this.configuracao.email_destinatario}.`); }
     catch (erro) { this.falha(erro); }
   }
 

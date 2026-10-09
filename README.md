@@ -12,11 +12,12 @@ O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron
 
 - 🧭 **Painel:** resumo das fontes, vagas elegíveis, pendências e próxima busca.
 - 🔗 **Sites monitorados:** cadastro, edição, pausa e exclusão lógica de páginas de vagas.
-- 🔎 **Busca automática:** dois horários editáveis pelo painel, no fuso `America/Sao_Paulo`.
+- 🔎 **Busca automática e manual:** duas buscas diárias configuráveis e início manual a qualquer hora, com andamento acompanhado no painel.
 - 🎯 **Tipos de vaga:** estágio, trainee, júnior e analista júnior, selecionáveis individualmente; variações como “Junior”, “Jr.” e “Estagiária” são reconhecidas.
 - 🌎 **Regra fixa:** somente oportunidades de TI, remotas e disponíveis para residentes no Brasil podem ser elegíveis.
 - 🗂️ **Vagas:** separação entre elegíveis e pendentes de verificação; acompanhamento de interesse e candidatura.
 - 📈 **Histórico:** registro das buscas e de falhas por fonte.
+- ✉️ **Avisos por e-mail:** remetente e destinatário editáveis; alertas com link original quando uma busca termina com vagas elegíveis.
 - 🔐 **Acesso pessoal:** a API exige uma chave configurada como segredo do Worker. Não há cadastro público.
 
 ## 🧱 Organização
@@ -27,10 +28,13 @@ JobSignal/
 │   └── app/                Telas e interação com a API
 ├── worker/                 API, agendamento, coleta e classificação
 │   ├── index.ts            Rotas, execução e tarefas
-│   ├── fontes.ts           Integrações de plataformas de vagas
+│   ├── fontes.ts           Integrações e identificação das fontes
+│   ├── fontes-html.ts      Leitura e normalização de listagens públicas
+│   ├── email.ts            Montagem e envio de alertas pelo Gmail API
 │   └── classificador.ts    Regras de elegibilidade
 ├── migrations/             Evolução versionada do banco D1
 │   └── 0001_inicial.sql    Tabelas e índices iniciais
+│   └── 0002_buscas_email.sql  Campos de busca e aviso por e-mail
 ├── public/                 Imagens estáticas, incluindo a logo
 ├── docs/                   Explicações técnicas e das fontes
 └── wrangler.jsonc          Configuração dos recursos Cloudflare
@@ -91,9 +95,29 @@ O comando de publicação executa o build Angular e publica o Worker e os arquiv
 
 ## 🔗 Fontes de vagas
 
-Cadastre a **página com a listagem das vagas**, como uma página de carreiras. A primeira versão consulta fontes hospedadas em **Greenhouse** e **Lever**, usando as APIs públicas dessas plataformas. Se uma URL não corresponder a uma integração disponível, ela fica marcada como **integração pendente** e não é consultada automaticamente.
+Cadastre a **página com a listagem das vagas**, como uma página de carreiras. Há integrações para **Greenhouse**, **Lever**, **Recrut.ai**, **CI&T**, **CWI** e listagens públicas da **Remotar**. As fontes reconhecidas anteriormente são identificadas novamente na próxima carga do painel ou busca. NTT DATA e outros endereços não reconhecidos continuam como integração pendente até uma implementação e validação próprias.
 
-Os dados exibidos vêm das fontes reais cadastradas. Na primeira consulta de cada fonte, as vagas existentes são carregadas sem tratá-las como alertas novos. O projeto não inclui envio externo por Telegram ou e-mail, porque esse canal ainda não foi escolhido; a organização e o acompanhamento das vagas estão no painel.
+Os dados exibidos vêm das fontes públicas cadastradas. Cada plataforma tem um adaptador limitado à forma atual da página ou API; alterações feitas pelos sites podem interromper a leitura e aparecerão como erro no histórico. A candidatura continua manual no endereço original da vaga.
+
+## ✉️ Avisos por Gmail
+
+Os campos de remetente e destinatário ficam editáveis em **Ajustes**. Os valores iniciais são `yugi.lucas@gmail.com` e `lucas.lcsf.dev@gmail.com`. O remetente precisa ser a conta Google autorizada no Gmail API ou um endereço permitido como alias dessa conta. Não é necessário comprar domínio nem usar Email Routing.
+
+O envio usa Gmail API OAuth 2.0; nenhuma senha é guardada no banco ou no código. Para ativar:
+
+1. No Google Cloud, crie/seleciona um projeto, habilite **Gmail API** e crie credenciais OAuth 2.0 para aplicativo Web.
+2. Gere uma autorização offline com escopo `https://www.googleapis.com/auth/gmail.send` para a conta remetente e obtenha o `refresh_token`. No modo de teste do consentimento Google, tokens podem expirar após sete dias.
+3. Cadastre os três valores como segredos do Worker, sem colocá-los no Git:
+
+```powershell
+npx wrangler secret put GMAIL_CLIENT_ID
+npx wrangler secret put GMAIL_CLIENT_SECRET
+npx wrangler secret put GMAIL_REFRESH_TOKEN
+```
+
+4. Publique o Worker e abra **Ajustes → Enviar e-mail de teste**. O botão só fica disponível quando os três segredos existem. O histórico informa se o aviso está pendente, foi enviado ou falhou.
+
+O JobSignal reúne vagas elegíveis ainda não notificadas e envia até 50 por mensagem ao final da busca. Falhas são registradas e tentadas novamente em execuções posteriores. Endereços alterados devem corresponder às permissões de envio da conta Google.
 
 Consulte [Fontes e classificação](docs/fontes-e-classificacao.md) para exemplos de links, regras e limitações da leitura automática.
 
@@ -102,7 +126,8 @@ Consulte [Fontes e classificação](docs/fontes-e-classificacao.md) para exemplo
 - A chave de acesso deve ser guardada como **Secret** no Worker e em `.dev.vars` apenas para testes locais.
 - A interface não contém segredos embutidos. A chave digitada fica em `sessionStorage`, até a aba ou sessão terminar.
 - A API exige autorização em todas as rotas; não há registro público de usuários.
-- A coleta usa apenas endpoints conhecidos das plataformas suportadas. Links de outros sites são armazenados como pendentes, sem fazer requisições arbitrárias a eles.
+- A coleta usa somente os domínios e caminhos reconhecidos pelos adaptadores. Links de outros sites ficam pendentes, sem requisições arbitrárias.
+- Tokens OAuth do Gmail devem ser cadastrados como **Secrets** no Worker, nunca em `.dev.vars` versionado, no banco ou na interface.
 - Não armazene currículos, páginas inteiras ou dados pessoais desnecessários nesse banco.
 
 Para uso público mais amplo, avalie acrescentar Cloudflare Access e uma revisão específica de autenticação antes de divulgar o endereço da aplicação.

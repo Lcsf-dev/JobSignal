@@ -1,11 +1,15 @@
 import { classificar, type TipoVaga } from './classificador';
 import { coletarVagas, identificarOrigem } from './fontes';
+import { emailValido, enviarPeloGmail, gmailConfigurado, type VagaParaEmail } from './email';
 
 interface Ambiente {
   DB: D1Database;
   FILA: Queue<{ tarefaId: number }>;
   ASSETS: Fetcher;
   ACESSO_TOKEN?: string;
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+  GMAIL_REFRESH_TOKEN?: string;
 }
 
 interface Configuracao {
@@ -13,6 +17,9 @@ interface Configuracao {
   horario_noite: string;
   tipos: string;
   pausado: number;
+  email_remetente: string;
+  email_destinatario: string;
+  email_ativo: number;
   atualizado_em: string;
 }
 
@@ -81,12 +88,26 @@ function proximaBusca(configuracao: Configuracao): string | null {
 }
 
 async function configuracaoAtual(db: D1Database): Promise<Configuracao> {
-  const item = await db.prepare('SELECT horario_manha, horario_noite, tipos, pausado, atualizado_em FROM configuracao WHERE id = 1').first<Configuracao>();
+  const item = await db.prepare('SELECT horario_manha, horario_noite, tipos, pausado, email_remetente, email_destinatario, email_ativo, atualizado_em FROM configuracao WHERE id = 1').first<Configuracao>();
   if (!item) throw new Error('Banco sem migração inicial.');
   return item;
 }
 
-async function criarExecucao(env: Ambiente, chave: string, previstaEm: string): Promise<void> {
+async function sincronizarFontes(env: Ambiente): Promise<void> {
+  const pendentes = await env.DB.prepare("SELECT id, url FROM fontes WHERE plataforma = 'pendente' AND estado = 'integracao_pendente'").all<{ id: number; url: string }>();
+  for (const fonte of pendentes.results) {
+    try {
+      const origem = identificarOrigem(fonte.url);
+      if (origem.plataforma !== 'pendente') {
+        await env.DB.prepare("UPDATE fontes SET plataforma = ?, identificador = ?, ativa = 1, estado = 'ativa' WHERE id = ? AND plataforma = 'pendente'")
+          .bind(origem.plataforma, origem.identificador, fonte.id).run();
+      }
+    } catch (erro) { console.error('Fonte cadastrada com URL inválida', fonte.id, erro); }
+  }
+}
+
+async function criarExecucao(env: Ambiente, chave: string, previstaEm: string): Promise<{ id: number; total: number }> {
+  await sincronizarFontes(env);
   await env.DB.prepare('INSERT OR IGNORE INTO execucoes (chave, prevista_em) VALUES (?, ?)').bind(chave, previstaEm).run();
   const execucao = await env.DB.prepare('SELECT id FROM execucoes WHERE chave = ?').bind(chave).first<{ id: number }>();
   if (!execucao) throw new Error('Não foi possível criar a execução.');
@@ -94,7 +115,15 @@ async function criarExecucao(env: Ambiente, chave: string, previstaEm: string): 
     SELECT ?, id FROM fontes WHERE ativa = 1 AND plataforma != 'pendente'`).bind(execucao.id).run();
   await env.DB.prepare(`UPDATE execucoes SET total_fontes = (SELECT COUNT(*) FROM tarefas WHERE execucao_id = ?) WHERE id = ?`)
     .bind(execucao.id, execucao.id).run();
+  const contagem = await env.DB.prepare('SELECT total_fontes AS total FROM execucoes WHERE id = ?').bind(execucao.id).first<{ total: number }>();
+  const total = contagem?.total ?? 0;
+  if (total === 0) {
+    await env.DB.prepare("UPDATE execucoes SET estado = 'sem_fontes', concluida_em = CURRENT_TIMESTAMP, email_estado = 'sem_vagas' WHERE id = ?")
+      .bind(execucao.id).run();
+    return { id: execucao.id, total };
+  }
   await distribuirPendencias(env);
+  return { id: execucao.id, total };
 }
 
 async function distribuirPendencias(env: Ambiente): Promise<void> {
@@ -114,6 +143,7 @@ async function distribuirPendencias(env: Ambiente): Promise<void> {
 
 async function agendar(env: Ambiente, instante = new Date()): Promise<void> {
   const configuracao = await configuracaoAtual(env.DB);
+  await sincronizarFontes(env);
   if (!configuracao.pausado) {
     const atual = agoraBrasilia(instante);
     const alteracao = agoraBrasilia(new Date(`${configuracao.atualizado_em.replace(' ', 'T')}Z`));
@@ -124,6 +154,63 @@ async function agendar(env: Ambiente, instante = new Date()): Promise<void> {
     }
   }
   await distribuirPendencias(env);
+  await revisarExecucoes(env);
+  await notificarPendentes(env);
+}
+
+async function revisarExecucoes(env: Ambiente): Promise<void> {
+  await env.DB.prepare(`UPDATE execucoes SET
+    concluida_fontes = (SELECT COUNT(*) FROM tarefas WHERE execucao_id = execucoes.id AND estado IN ('concluida','ignorada','erro') AND (estado != 'erro' OR tentativas >= 3)),
+    erros = (SELECT COUNT(*) FROM tarefas WHERE execucao_id = execucoes.id AND estado = 'erro'),
+    estado = CASE WHEN NOT EXISTS (SELECT 1 FROM tarefas WHERE execucao_id = execucoes.id AND estado NOT IN ('concluida','ignorada') AND NOT (estado = 'erro' AND tentativas >= 3)) THEN 'concluida' ELSE 'em_andamento' END,
+    concluida_em = CASE WHEN NOT EXISTS (SELECT 1 FROM tarefas WHERE execucao_id = execucoes.id AND estado NOT IN ('concluida','ignorada') AND NOT (estado = 'erro' AND tentativas >= 3)) THEN COALESCE(concluida_em, CURRENT_TIMESTAMP) ELSE NULL END
+    WHERE estado IN ('pendente','em_andamento') AND total_fontes > 0`).run();
+}
+
+async function notificarExecucao(env: Ambiente, execucaoId: number): Promise<void> {
+  const configuracao = await configuracaoAtual(env.DB);
+  if (!configuracao.email_ativo) {
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'desativado' WHERE id = ? AND email_estado != 'enviado'").bind(execucaoId).run();
+    return;
+  }
+  if (!gmailConfigurado(env)) {
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'configuracao_pendente', email_erro = 'Conecte a conta do Gmail para enviar alertas.' WHERE id = ? AND email_estado NOT IN ('enviado','sem_vagas')")
+      .bind(execucaoId).run();
+    return;
+  }
+  const reserva = await env.DB.prepare(`UPDATE execucoes SET email_estado = 'enviando', email_tentativas = email_tentativas + 1,
+    email_tentado_em = CURRENT_TIMESTAMP, email_erro = NULL WHERE id = ? AND estado = 'concluida' AND
+    (email_estado IN ('pendente','configuracao_pendente','desativado') OR
+      (email_estado = 'erro' AND email_tentativas < 3 AND email_tentado_em < datetime('now', '-5 minutes')) OR
+      (email_estado = 'enviando' AND email_tentado_em < datetime('now', '-15 minutes')))`).bind(execucaoId).run();
+  if (!reserva.meta.changes) return;
+  try {
+    const vagas = await env.DB.prepare(`SELECT id, titulo, empresa, url, tipo FROM vagas
+      WHERE classificacao = 'elegivel' AND notificada_em IS NULL ORDER BY primeira_deteccao, id LIMIT 50`).all<VagaParaEmail>();
+    if (!vagas.results.length) {
+      await env.DB.prepare("UPDATE execucoes SET email_estado = 'sem_vagas', email_total_vagas = 0 WHERE id = ?").bind(execucaoId).run();
+      return;
+    }
+    await enviarPeloGmail(env, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, vagas.results);
+    const marcadores = vagas.results.map(() => '?').join(',');
+    await env.DB.prepare(`UPDATE vagas SET notificada_em = CURRENT_TIMESTAMP WHERE id IN (${marcadores}) AND notificada_em IS NULL`)
+      .bind(...vagas.results.map((vaga) => vaga.id)).run();
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'enviado', email_enviado_em = CURRENT_TIMESTAMP, email_total_vagas = ? WHERE id = ?")
+      .bind(vagas.results.length, execucaoId).run();
+  } catch (erro) {
+    const mensagem = erro instanceof Error ? erro.message.slice(0, 250) : 'Falha desconhecida no envio.';
+    await env.DB.prepare("UPDATE execucoes SET email_estado = 'erro', email_erro = ? WHERE id = ?").bind(mensagem, execucaoId).run();
+    console.error('Falha ao enviar alerta do JobSignal', execucaoId, mensagem);
+  }
+}
+
+async function notificarPendentes(env: Ambiente): Promise<void> {
+  const execucoes = await env.DB.prepare(`SELECT id FROM execucoes WHERE estado = 'concluida' AND
+    (email_estado IN ('pendente','configuracao_pendente','desativado') OR
+      (email_estado = 'erro' AND email_tentativas < 3 AND email_tentado_em < datetime('now', '-5 minutes')) OR
+      (email_estado = 'enviando' AND email_tentado_em < datetime('now', '-15 minutes')))
+    ORDER BY id DESC LIMIT 5`).all<{ id: number }>();
+  for (const execucao of execucoes.results) await notificarExecucao(env, execucao.id);
 }
 
 async function concluirTarefa(env: Ambiente, tarefaId: number, execucaoId: number, estado: string, erro: string | null, lidas: number, novas: number): Promise<void> {
@@ -135,6 +222,8 @@ async function concluirTarefa(env: Ambiente, tarefaId: number, execucaoId: numbe
     estado = CASE WHEN (SELECT COUNT(*) FROM tarefas WHERE execucao_id = ? AND estado NOT IN ('concluida','ignorada') AND NOT (estado = 'erro' AND tentativas >= 3)) = 0 THEN 'concluida' ELSE 'em_andamento' END,
     concluida_em = CASE WHEN (SELECT COUNT(*) FROM tarefas WHERE execucao_id = ? AND estado NOT IN ('concluida','ignorada') AND NOT (estado = 'erro' AND tentativas >= 3)) = 0 THEN CURRENT_TIMESTAMP ELSE NULL END
     WHERE id = ?`).bind(execucaoId, execucaoId, execucaoId, execucaoId, execucaoId).run();
+  const execucao = await env.DB.prepare('SELECT estado FROM execucoes WHERE id = ?').bind(execucaoId).first<{ estado: string }>();
+  if (execucao?.estado === 'concluida') await notificarExecucao(env, execucaoId);
 }
 
 async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
@@ -155,18 +244,16 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
     const vagas = await coletarVagas(origem, tarefa.nome);
     const configuracao = await configuracaoAtual(env.DB);
     const tipos = JSON.parse(configuracao.tipos) as TipoVaga[];
-    const primeiraConsulta = !tarefa.ultima_consulta;
     for (const vaga of vagas) {
       lidas++;
       const classificacao = classificar(vaga, tipos);
       const existente = await env.DB.prepare('SELECT id, classificacao, tipo, motivo FROM vagas WHERE fonte_id = ? AND id_externo = ?')
         .bind(tarefa.fonte_id, vaga.idExterno).first<{ id: number; classificacao: string; tipo: string | null; motivo: string }>();
       if (!existente) {
-        const notificada = !primeiraConsulta && classificacao.classificacao === 'elegivel' ? new Date().toISOString() : null;
         const insercao = await env.DB.prepare(`INSERT OR IGNORE INTO vagas
           (fonte_id, id_externo, titulo, empresa, url, localidade, tipo, classificacao, motivo, notificada_em)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(tarefa.fonte_id, vaga.idExterno, vaga.titulo, vaga.empresa, vaga.url,
-          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, notificada).run();
+          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, null).run();
         if (insercao.meta.changes) novas++;
       } else if (existente.classificacao !== classificacao.classificacao || existente.tipo !== classificacao.tipo || existente.motivo !== classificacao.motivo) {
         await env.DB.prepare(`UPDATE vagas SET titulo = ?, url = ?, localidade = ?, tipo = ?, classificacao = ?, motivo = ?, ultima_confirmacao = CURRENT_TIMESTAMP WHERE id = ?`)
@@ -194,26 +281,41 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
   if (caminho === '/api/estado' && metodo === 'GET') {
     const configuracao = await configuracaoAtual(env.DB);
     const [fontes, vagas, pendentes, ultima] = await Promise.all([
-      env.DB.prepare('SELECT COUNT(*) AS total FROM fontes WHERE ativa = 1').first<{ total: number }>(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM fontes WHERE ativa = 1 AND plataforma != 'pendente'").first<{ total: number }>(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'elegivel'").first<{ total: number }>(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'pendente'").first<{ total: number }>(),
       env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 1').first()
     ]);
-    return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, proximaBusca: proximaBusca(configuracao),
+    return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, emailConfigurado: gmailConfigurado(env), proximaBusca: proximaBusca(configuracao),
       fontesAtivas: fontes?.total ?? 0, vagasElegiveis: vagas?.total ?? 0, vagasPendentes: pendentes?.total ?? 0, ultimaExecucao: ultima });
   }
   if (caminho === '/api/configuracao' && metodo === 'PUT') {
     const dados = await corpoJson(request);
     const tipos = dados['tipos'];
     if (!horaValida(dados['horario_manha']) || !horaValida(dados['horario_noite']) || dados['horario_manha'] === dados['horario_noite'] ||
-      !Array.isArray(tipos) || !tipos.length || tipos.some((tipo) => !tiposPermitidos.includes(tipo as TipoVaga)) || typeof dados['pausado'] !== 'boolean') {
-      return resposta({ erro: 'Informe dois horários diferentes, ao menos um tipo de vaga e o estado do monitoramento.' }, 400);
+      !Array.isArray(tipos) || !tipos.length || tipos.some((tipo) => !tiposPermitidos.includes(tipo as TipoVaga)) || typeof dados['pausado'] !== 'boolean' ||
+      typeof dados['email_remetente'] !== 'string' || !emailValido(dados['email_remetente']) ||
+      typeof dados['email_destinatario'] !== 'string' || !emailValido(dados['email_destinatario']) || typeof dados['email_ativo'] !== 'boolean') {
+      return resposta({ erro: 'Informe horários, tipos de vaga e endereços de e-mail válidos.' }, 400);
     }
-    await env.DB.prepare(`UPDATE configuracao SET horario_manha = ?, horario_noite = ?, tipos = ?, pausado = ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = 1`)
-      .bind(dados['horario_manha'], dados['horario_noite'], JSON.stringify([...new Set(tipos)]), dados['pausado'] ? 1 : 0).run();
+    await env.DB.prepare(`UPDATE configuracao SET horario_manha = ?, horario_noite = ?, tipos = ?, pausado = ?,
+      email_remetente = ?, email_destinatario = ?, email_ativo = ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = 1`)
+      .bind(dados['horario_manha'], dados['horario_noite'], JSON.stringify([...new Set(tipos)]), dados['pausado'] ? 1 : 0,
+        dados['email_remetente'].trim(), dados['email_destinatario'].trim(), dados['email_ativo'] ? 1 : 0).run();
     return resposta({ ok: true });
   }
+  if (caminho === '/api/email/testar' && metodo === 'POST') {
+    const configuracao = await configuracaoAtual(env.DB);
+    if (!gmailConfigurado(env)) return resposta({ erro: 'A conta do Gmail ainda não foi conectada.' }, 409);
+    try {
+      await enviarPeloGmail(env, { remetente: configuracao.email_remetente, destinatario: configuracao.email_destinatario }, [], true);
+      return resposta({ ok: true, mensagem: `E-mail de teste enviado para ${configuracao.email_destinatario}.` });
+    } catch (erro) {
+      return resposta({ erro: erro instanceof Error ? erro.message : 'Falha no envio do teste.' }, 502);
+    }
+  }
   if (caminho === '/api/fontes' && metodo === 'GET') {
+    await sincronizarFontes(env);
     return resposta((await env.DB.prepare('SELECT * FROM fontes ORDER BY criada_em DESC, id DESC LIMIT 100').all()).results);
   }
   if (caminho === '/api/fontes' && metodo === 'POST') {
@@ -262,14 +364,15 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
     return resposta((await env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 30').all()).results);
   }
   if (caminho === '/api/executar' && metodo === 'POST') {
-    const configuracao = await configuracaoAtual(env.DB);
-    if (configuracao.pausado) return resposta({ erro: 'Monitoramento está pausado.' }, 409);
-    const ultima = await env.DB.prepare(`SELECT iniciada_em FROM execucoes WHERE chave LIKE 'manual:%' ORDER BY id DESC LIMIT 1`).first<{ iniciada_em: string }>();
-    if (ultima && Date.now() - new Date(`${ultima.iniciada_em.replace(' ', 'T')}Z`).getTime() < 15 * 60_000) {
-      return resposta({ erro: 'Aguarde 15 minutos entre buscas manuais.' }, 429);
-    }
-    await criarExecucao(env, `manual:${Date.now()}`, new Date().toISOString());
-    return resposta({ ok: true }, 202);
+    await sincronizarFontes(env);
+    await distribuirPendencias(env);
+    await revisarExecucoes(env);
+    const fontes = await env.DB.prepare("SELECT COUNT(*) AS total FROM fontes WHERE ativa = 1 AND plataforma != 'pendente'").first<{ total: number }>();
+    if (!fontes?.total) return resposta({ erro: 'Nenhum site com integração ativa. Confira a situação em Sites monitorados.' }, 409);
+    const ativa = await env.DB.prepare("SELECT id FROM execucoes WHERE estado IN ('pendente','em_andamento') AND total_fontes > 0 LIMIT 1").first();
+    if (ativa) return resposta({ erro: 'Uma busca já está em andamento. Acompanhe o histórico antes de iniciar outra.' }, 409);
+    const execucao = await criarExecucao(env, `manual:${Date.now()}`, new Date().toISOString());
+    return resposta({ ok: true, execucaoId: execucao.id, totalFontes: execucao.total }, 202);
   }
   return resposta({ erro: 'Rota não encontrada.' }, 404);
 }
