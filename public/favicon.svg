@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="JobSignal">
+  <rect width="64" height="64" rx="16" fill="#ecf7ff"/>
+  <circle cx="17" cy="39" r="7" fill="#17d9c7"/>
+  <path d="M17 22a17 17 0 0 1 17 17" fill="none" stroke="#10b6e6" stroke-linecap="round" stroke-width="7"/>
+  <path d="M17 9a30 30 0 0 1 30 30" fill="none" stroke="#0865e7" stroke-linecap="round" stroke-width="7"/>
+</svg>
