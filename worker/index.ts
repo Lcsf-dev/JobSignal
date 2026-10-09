@@ -8,6 +8,9 @@ interface Ambiente {
   FILA: Queue<{ tarefaId: number }>;
   ASSETS: Fetcher;
   BROWSER: BrowserRun;
+  LIMITE_TENTATIVAS: RateLimit;
+  LIMITE_API: RateLimit;
+  LIMITE_ACOES: RateLimit;
   ACESSO_TOKEN?: string;
   GMAIL_APP_PASSWORD?: string;
   EMAIL_ENCRYPTION_KEY?: string;
@@ -53,6 +56,19 @@ const intervaloBrowserRunMs = 12_000;
 
 function resposta(dados: unknown, status = 200): Response {
   return new Response(JSON.stringify(dados), { status, headers: cabecalhos });
+}
+
+function respostaLimite(): Response {
+  return new Response(JSON.stringify({ erro: 'Muitas solicitações. Aguarde um minuto e tente novamente.' }),
+    { status: 429, headers: { ...cabecalhos, 'Retry-After': '60' } });
+}
+
+async function dentroDoLimite(limite: RateLimit, chave: string): Promise<boolean> {
+  try { return (await limite.limit({ key: chave })).success; }
+  catch (erro) {
+    console.error('Falha no limitador de requisições', erro);
+    return true;
+  }
 }
 
 function compararToken(recebido: string, esperado: string): boolean {
@@ -329,9 +345,16 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
 async function api(request: Request, env: Ambiente): Promise<Response> {
   if (!env.ACESSO_TOKEN || env.ACESSO_TOKEN.length < 24) return resposta({ erro: 'Configure o segredo ACESSO_TOKEN antes de usar a API.' }, 503);
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
-  if (!compararToken(token, env.ACESSO_TOKEN)) return resposta({ erro: 'Acesso não autorizado.' }, 401);
+  const origem = request.headers.get('cf-connecting-ip') ?? 'origem-desconhecida';
+  if (!compararToken(token, env.ACESSO_TOKEN)) {
+    if (!await dentroDoLimite(env.LIMITE_TENTATIVAS, origem)) return respostaLimite();
+    return resposta({ erro: 'Acesso não autorizado.' }, 401);
+  }
+  if (!await dentroDoLimite(env.LIMITE_API, origem)) return respostaLimite();
   const caminho = new URL(request.url).pathname;
   const metodo = request.method;
+  if (metodo === 'POST' && (caminho === '/api/executar' || caminho === '/api/email/testar') &&
+    !await dentroDoLimite(env.LIMITE_ACOES, caminho)) return respostaLimite();
   if (caminho === '/api/estado' && metodo === 'GET') {
     const configuracao = await configuracaoAtual(env.DB);
     const [fontes, vagas, pendentes, ultima] = await Promise.all([

@@ -10,6 +10,11 @@
     "run_worker_first": ["/api/*"]
   },
   "browser": { "binding": "BROWSER" },
+  "ratelimits": [
+    { "name": "LIMITE_TENTATIVAS", "namespace_id": "21901", "simple": { "limit": 10, "period": 60 } },
+    { "name": "LIMITE_API", "namespace_id": "21902", "simple": { "limit": 120, "period": 60 } },
+    { "name": "LIMITE_ACOES", "namespace_id": "21903", "simple": { "limit": 2, "period": 60 } }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
