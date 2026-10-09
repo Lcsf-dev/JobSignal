@@ -6,9 +6,10 @@ type Tipo = 'estagio' | 'trainee' | 'junior' | 'analista_junior';
 
 interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
 interface Execucao { id: number; prevista_em: string; iniciada_em: string; concluida_em: string | null; estado: string; total_fontes: number; concluida_fontes: number; erros: number; email_estado?: string; email_erro?: string | null; email_total_vagas?: number }
+interface TarefaExecucao { id: number; fonte: string; estado: string; tentativas: number; vagas_lidas: number; vagas_novas: number; erro: string | null }
 interface Estado { configuracao: Configuracao; emailConfigurado: boolean; proximaBusca: string | null; fontesAtivas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
 interface Fonte { id: number; nome: string; url: string; plataforma: string; ativa: number; estado: string; ultima_consulta: string | null; ultimo_erro: string | null; total_vagas: number }
-interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; acompanhamento: string; primeira_deteccao: string; notificada_em: string | null; fonte_nome: string }
+interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; acompanhamento: string; primeira_deteccao: string; publicada_em: string | null; notificada_em: string | null; fonte_nome: string }
 
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.css' })
 export class App {
@@ -25,6 +26,7 @@ export class App {
   ];
   readonly aba = signal<Aba>('painel');
   readonly conectado = signal(false);
+  readonly restaurandoSessao = signal(true);
   readonly carregando = signal(false);
   readonly erro = signal('');
   readonly aviso = signal('');
@@ -33,6 +35,9 @@ export class App {
   readonly vagas = signal<Vaga[]>([]);
   readonly pendentes = signal<Vaga[]>([]);
   readonly historico = signal<Execucao[]>([]);
+  readonly detalhesExecucao = signal<Record<number, TarefaExecucao[]>>({});
+  readonly execucaoAberta = signal<number | null>(null);
+  readonly execucaoCarregando = signal<number | null>(null);
   token = '';
   nomeFonte = '';
   urlFonte = '';
@@ -42,6 +47,7 @@ export class App {
   constructor() {
     this.token = sessionStorage.getItem('jobsignal_token') ?? '';
     if (this.token) void this.carregar();
+    else this.restaurandoSessao.set(false);
   }
 
   private async api<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
@@ -76,7 +82,25 @@ export class App {
       this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
       this.fontes.set(fontes.filter((fonte) => fonte.estado !== 'excluida'));
       this.vagas.set(vagas); this.pendentes.set(pendentes); this.historico.set(historico); this.conectado.set(true);
-    } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); }
+    } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); this.restaurandoSessao.set(false); }
+  }
+
+  async atualizarDados(): Promise<void> {
+    if (this.carregando()) return;
+    await this.carregar();
+    if (this.conectado()) this.aviso.set('Dados atualizados.');
+  }
+
+  async alternarDetalhes(execucaoId: number): Promise<void> {
+    if (this.execucaoAberta() === execucaoId) { this.execucaoAberta.set(null); return; }
+    this.execucaoAberta.set(execucaoId);
+    if (this.detalhesExecucao()[execucaoId]) return;
+    this.execucaoCarregando.set(execucaoId);
+    try {
+      const tarefas = await this.api<TarefaExecucao[]>(`/execucoes/${execucaoId}/tarefas`);
+      this.detalhesExecucao.set({ ...this.detalhesExecucao(), [execucaoId]: tarefas });
+    } catch (erro) { this.falha(erro); }
+    finally { this.execucaoCarregando.set(null); }
   }
 
   mudarAba(aba: Aba): void { this.aba.set(aba); this.erro.set(''); this.aviso.set(''); window.scrollTo({ top: 0, behavior: 'smooth' }); }
