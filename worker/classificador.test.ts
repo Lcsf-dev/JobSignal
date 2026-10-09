@@ -39,6 +39,23 @@ test('não confunde menção inclusiva com vaga exclusiva para PCD', () => {
   assert.equal(classificar(vaga('Desenvolvedor Júnior', 'Remoto - Brasil', 'Desenvolvimento de software. Vaga exclusiva para PCD.'), tipos).classificacao, 'descartada');
 });
 
+test('permite incluir vaga afirmativa para PcD e exibe o marcador', () => {
+  const resultado = classificar(vaga('Desenvolvedor Júnior', 'Remoto - Brasil', 'Vaga exclusiva para Pessoas com Deficiência. Desenvolvimento de software.'), tipos,
+    { incluirPcd: true, incluirMulheres: true });
+  assert.equal(resultado.classificacao, 'elegivel');
+  assert.deepEqual(resultado.marcadores, ['pcd']);
+});
+
+test('filtra vagas afirmativas para mulheres conforme a preferência', () => {
+  const oportunidade = vaga('Analista de Dados Júnior - Vaga afirmativa para mulheres');
+  const incluída = classificar(oportunidade, tipos, { incluirPcd: false, incluirMulheres: true });
+  const excluída = classificar(oportunidade, tipos, { incluirPcd: false, incluirMulheres: false });
+  assert.equal(incluída.classificacao, 'elegivel');
+  assert.deepEqual(incluída.marcadores, ['mulheres']);
+  assert.equal(excluída.classificacao, 'descartada');
+  assert.match(excluída.motivo, /desativada nos filtros/);
+});
+
 test('não aceita estágio de RH de uma empresa de software', () => {
   assert.equal(classificar(vaga('Estágio em RH'), tipos).classificacao, 'descartada');
 });

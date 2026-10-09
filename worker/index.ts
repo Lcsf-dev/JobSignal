@@ -17,6 +17,8 @@ interface Configuracao {
   horario_noite: string;
   tipos: string;
   pausado: number;
+  incluir_pcd: number;
+  incluir_mulheres: number;
   email_remetente: string;
   email_destinatario: string;
   email_ativo: number;
@@ -88,7 +90,7 @@ function proximaBusca(configuracao: Configuracao): string | null {
 }
 
 async function configuracaoAtual(db: D1Database): Promise<Configuracao> {
-  const item = await db.prepare('SELECT horario_manha, horario_noite, tipos, pausado, email_remetente, email_destinatario, email_ativo, atualizado_em FROM configuracao WHERE id = 1').first<Configuracao>();
+  const item = await db.prepare('SELECT horario_manha, horario_noite, tipos, pausado, incluir_pcd, incluir_mulheres, email_remetente, email_destinatario, email_ativo, atualizado_em FROM configuracao WHERE id = 1').first<Configuracao>();
   if (!item) throw new Error('Banco sem migração inicial.');
   return item;
 }
@@ -244,19 +246,23 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
     const tipos = JSON.parse(configuracao.tipos) as TipoVaga[];
     for (const vaga of vagas) {
       lidas++;
-      const classificacao = classificar(vaga, tipos);
+      const classificacao = classificar(vaga, tipos, {
+        incluirPcd: Boolean(configuracao.incluir_pcd),
+        incluirMulheres: Boolean(configuracao.incluir_mulheres)
+      });
       const existente = await env.DB.prepare('SELECT id, classificacao, tipo, motivo FROM vagas WHERE fonte_id = ? AND id_externo = ?')
         .bind(tarefa.fonte_id, vaga.idExterno).first<{ id: number; classificacao: string; tipo: string | null; motivo: string }>();
       if (!existente) {
         const insercao = await env.DB.prepare(`INSERT OR IGNORE INTO vagas
-          (fonte_id, id_externo, titulo, empresa, url, localidade, tipo, classificacao, motivo, notificada_em, publicada_em)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(tarefa.fonte_id, vaga.idExterno, vaga.titulo, vaga.empresa, vaga.url,
-          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, null, vaga.publicadaEm ?? null).run();
+          (fonte_id, id_externo, titulo, empresa, url, localidade, tipo, classificacao, motivo, notificada_em, publicada_em, marcadores)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(tarefa.fonte_id, vaga.idExterno, vaga.titulo, vaga.empresa, vaga.url,
+          vaga.localidade, classificacao.tipo, classificacao.classificacao, classificacao.motivo, null, vaga.publicadaEm ?? null, classificacao.marcadores.join(',')).run();
         if (insercao.meta.changes) novas++;
       } else {
         await env.DB.prepare(`UPDATE vagas SET titulo = ?, url = ?, localidade = ?, publicada_em = COALESCE(?, publicada_em),
-          tipo = ?, classificacao = ?, motivo = ?, ultima_confirmacao = CURRENT_TIMESTAMP WHERE id = ?`)
-          .bind(vaga.titulo, vaga.url, vaga.localidade, vaga.publicadaEm ?? null, classificacao.tipo, classificacao.classificacao, classificacao.motivo, existente.id).run();
+          tipo = ?, classificacao = ?, motivo = ?, marcadores = ?, ultima_confirmacao = CURRENT_TIMESTAMP WHERE id = ?`)
+          .bind(vaga.titulo, vaga.url, vaga.localidade, vaga.publicadaEm ?? null, classificacao.tipo, classificacao.classificacao,
+            classificacao.motivo, classificacao.marcadores.join(','), existente.id).run();
       }
     }
     await env.DB.prepare(`UPDATE fontes SET estado = 'ativa', ultima_tentativa = CURRENT_TIMESTAMP, ultima_consulta = CURRENT_TIMESTAMP,
@@ -280,26 +286,34 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
   if (caminho === '/api/estado' && metodo === 'GET') {
     const configuracao = await configuracaoAtual(env.DB);
     const [fontes, vagas, pendentes, ultima] = await Promise.all([
-      env.DB.prepare("SELECT COUNT(*) AS total FROM fontes WHERE ativa = 1 AND plataforma != 'pendente'").first<{ total: number }>(),
+      env.DB.prepare(`SELECT COUNT(*) AS cadastradas,
+        SUM(CASE WHEN ativa = 1 AND plataforma != 'pendente' THEN 1 ELSE 0 END) AS ativas,
+        SUM(CASE WHEN plataforma = 'pendente' THEN 1 ELSE 0 END) AS sem_integracao,
+        SUM(CASE WHEN ativa = 0 AND plataforma != 'pendente' THEN 1 ELSE 0 END) AS pausadas
+        FROM fontes WHERE estado != 'excluida'`).first<{ cadastradas: number; ativas: number; sem_integracao: number; pausadas: number }>(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'elegivel'").first<{ total: number }>(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM vagas WHERE classificacao = 'pendente'").first<{ total: number }>(),
       env.DB.prepare('SELECT * FROM execucoes ORDER BY id DESC LIMIT 1').first()
     ]);
     return resposta({ configuracao: { ...configuracao, tipos: JSON.parse(configuracao.tipos) }, emailConfigurado: gmailConfigurado(env), proximaBusca: proximaBusca(configuracao),
-      fontesAtivas: fontes?.total ?? 0, vagasElegiveis: vagas?.total ?? 0, vagasPendentes: pendentes?.total ?? 0, ultimaExecucao: ultima });
+      fontesCadastradas: fontes?.cadastradas ?? 0, fontesAtivas: fontes?.ativas ?? 0,
+      fontesSemIntegracao: fontes?.sem_integracao ?? 0, fontesPausadas: fontes?.pausadas ?? 0,
+      vagasElegiveis: vagas?.total ?? 0, vagasPendentes: pendentes?.total ?? 0, ultimaExecucao: ultima });
   }
   if (caminho === '/api/configuracao' && metodo === 'PUT') {
     const dados = await corpoJson(request);
     const tipos = dados['tipos'];
     if (!horaValida(dados['horario_manha']) || !horaValida(dados['horario_noite']) || dados['horario_manha'] === dados['horario_noite'] ||
       !Array.isArray(tipos) || !tipos.length || tipos.some((tipo) => !tiposPermitidos.includes(tipo as TipoVaga)) || typeof dados['pausado'] !== 'boolean' ||
+      typeof dados['incluir_pcd'] !== 'boolean' || typeof dados['incluir_mulheres'] !== 'boolean' ||
       typeof dados['email_remetente'] !== 'string' || !emailValido(dados['email_remetente']) ||
       typeof dados['email_destinatario'] !== 'string' || !emailValido(dados['email_destinatario']) || typeof dados['email_ativo'] !== 'boolean') {
       return resposta({ erro: 'Informe horários, tipos de vaga e endereços de e-mail válidos.' }, 400);
     }
-    await env.DB.prepare(`UPDATE configuracao SET horario_manha = ?, horario_noite = ?, tipos = ?, pausado = ?,
+    await env.DB.prepare(`UPDATE configuracao SET horario_manha = ?, horario_noite = ?, tipos = ?, pausado = ?, incluir_pcd = ?, incluir_mulheres = ?,
       email_remetente = ?, email_destinatario = ?, email_ativo = ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = 1`)
       .bind(dados['horario_manha'], dados['horario_noite'], JSON.stringify([...new Set(tipos)]), dados['pausado'] ? 1 : 0,
+        dados['incluir_pcd'] ? 1 : 0, dados['incluir_mulheres'] ? 1 : 0,
         dados['email_remetente'].trim(), dados['email_destinatario'].trim(), dados['email_ativo'] ? 1 : 0).run();
     return resposta({ ok: true });
   }

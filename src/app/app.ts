@@ -4,12 +4,12 @@ import { FormsModule } from '@angular/forms';
 type Aba = 'painel' | 'fontes' | 'vagas' | 'pendentes' | 'descartadas' | 'historico' | 'ajustes';
 type Tipo = 'estagio' | 'trainee' | 'junior' | 'analista_junior';
 
-interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
+interface Configuracao { horario_manha: string; horario_noite: string; tipos: Tipo[]; pausado: boolean | number; incluir_pcd: boolean | number; incluir_mulheres: boolean | number; email_remetente: string; email_destinatario: string; email_ativo: boolean | number }
 interface Execucao { id: number; prevista_em: string; iniciada_em: string; concluida_em: string | null; estado: string; total_fontes: number; concluida_fontes: number; erros: number; email_estado?: string; email_erro?: string | null; email_total_vagas?: number }
 interface TarefaExecucao { id: number; fonte: string; estado: string; tentativas: number; vagas_lidas: number; vagas_novas: number; erro: string | null }
-interface Estado { configuracao: Configuracao; emailConfigurado: boolean; proximaBusca: string | null; fontesAtivas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
+interface Estado { configuracao: Configuracao; emailConfigurado: boolean; proximaBusca: string | null; fontesCadastradas: number; fontesAtivas: number; fontesSemIntegracao: number; fontesPausadas: number; vagasElegiveis: number; vagasPendentes: number; ultimaExecucao: Execucao | null }
 interface Fonte { id: number; nome: string; url: string; plataforma: string; ativa: number; estado: string; ultima_consulta: string | null; ultimo_erro: string | null; total_vagas: number }
-interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; acompanhamento: string; primeira_deteccao: string; publicada_em: string | null; notificada_em: string | null; fonte_nome: string }
+interface Vaga { id: number; titulo: string; empresa: string; url: string; localidade: string; tipo: string | null; classificacao: string; motivo: string; marcadores: string; acompanhamento: string; primeira_deteccao: string; publicada_em: string | null; notificada_em: string | null; fonte_nome: string }
 
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.css' })
 export class App {
@@ -46,7 +46,7 @@ export class App {
   nomeFonte = '';
   urlFonte = '';
   fonteEmEdicao: number | null = null;
-  configuracao: Configuracao = { horario_manha: '10:00', horario_noite: '22:00', tipos: ['estagio', 'trainee', 'junior', 'analista_junior'], pausado: false, email_remetente: 'yugi.lucas@gmail.com', email_destinatario: 'lucas.lcsf.dev@gmail.com', email_ativo: true };
+  configuracao: Configuracao = { horario_manha: '10:00', horario_noite: '22:00', tipos: ['estagio', 'trainee', 'junior', 'analista_junior'], pausado: false, incluir_pcd: false, incluir_mulheres: true, email_remetente: 'yugi.lucas@gmail.com', email_destinatario: 'lucas.lcsf.dev@gmail.com', email_ativo: true };
 
   constructor() {
     this.token = sessionStorage.getItem('jobsignal_token') ?? '';
@@ -90,7 +90,7 @@ export class App {
         this.api<Execucao[]>('/execucoes')
       ]);
       this.estado.set(estado);
-      this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
+      this.configuracao = { ...estado.configuracao, pausado: Boolean(estado.configuracao.pausado), incluir_pcd: Boolean(estado.configuracao.incluir_pcd), incluir_mulheres: Boolean(estado.configuracao.incluir_mulheres), email_ativo: Boolean(estado.configuracao.email_ativo), tipos: [...estado.configuracao.tipos] };
       this.fontes.set(fontes.filter((fonte) => fonte.estado !== 'excluida'));
       this.vagas.set(vagas); this.pendentes.set(pendentes); this.descartadas.set(descartadas);
       this.historico.set(historico); this.conectado.set(true);
