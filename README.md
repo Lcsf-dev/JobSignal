@@ -4,12 +4,6 @@ Monitor pessoal de vagas de TI. O JobSignal reúne páginas de carreira cadastra
 
 O projeto usa **Angular** na interface e **Cloudflare Workers, D1, Queues e Cron Triggers** na aplicação. O código pode ser versionado no GitHub; build e publicação podem ser executados diretamente do computador, sem GitHub Actions.
 
-## 🌐 Endereco de producao
-
-O JobSignal esta disponivel em `https://jobsignal.lchub.workers.dev/`. `jobsignal` e o nome deste Worker; `lchub` e o subdominio compartilhado da conta Cloudflare. O banco `jobsignal-db` e a fila `jobsignal-buscas` pertencem exclusivamente a este projeto e nao sao utilizados pelo LJV.
-
-Ao alterar o endereco da conta, atualize favoritos ou atalhos que usem a URL anterior. O nome do Worker em `wrangler.jsonc` permanece `jobsignal`, portanto as publicacoes futuras continuam atualizando o mesmo sistema.
-
 ## ✨ Funcionalidades
 
 - 🧭 **Painel:** resumo das fontes, vagas elegíveis, pendências e próxima busca.
@@ -38,7 +32,7 @@ JobSignal/
 └── wrangler.jsonc          Configuração dos recursos Cloudflare
 ```
 
-O banco `jobsignal-db` contém as tabelas de configuração, fontes, vagas, execuções e tarefas. O arquivo `0001_inicial.sql` cria a primeira versão dessas tabelas; **não é um segundo banco**. Todos os recursos do JobSignal são próprios e não têm conexão com o sistema LJV. A conta Cloudflare é a única coisa em comum.
+O banco `jobsignal-db` contém as tabelas de configuração, fontes, vagas, execuções e tarefas. O arquivo `0001_inicial.sql` cria a primeira versão dessas tabelas; **não é um segundo banco**.
 
 ## 🛠️ Requisitos para desenvolvimento
 
@@ -121,4 +115,4 @@ Esses comandos testam regras centrais de classificação, verificam os tipos do 
 
 ## 🚧 Estado do projeto
 
-O núcleo foi criado e está separado do LJV. A classificação automática é conservadora: quando o anúncio não confirma algum critério, a vaga fica em **pendentes**. Novas plataformas de carreiras exigem integrações próprias. O sistema não inventa vagas e não considera qualquer URL automaticamente compatível.
+O núcleo do sistema está implementado. A classificação automática é conservadora: quando o anúncio não confirma algum critério, a vaga fica em **pendentes**. Novas plataformas de carreiras exigem integrações próprias. O sistema não inventa vagas e não considera qualquer URL automaticamente compatível.
