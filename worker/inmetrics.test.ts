@@ -31,7 +31,8 @@ test('reconhece somente a listagem oficial da Inmetrics e preserva a busca geral
 test('coleta a lista completa da Inmetrics além dos dez cartões visíveis na primeira página', async () => {
   const anterior = globalThis.fetch;
   const chamadas: string[] = [];
-  globalThis.fetch = (async (entrada) => {
+  globalThis.fetch = (async (entrada, opcoes) => {
+    assert.equal(opcoes?.redirect, 'manual', 'O Worker exige modo manual para recusar redirecionamentos.');
     chamadas.push(String(entrada));
     return new Response(pagina({ jobs: Array.from({ length: 27 }, (_, indice) => anuncio(indice + 1)) },
       '<p>27 vagas encontradas para 0 filtros aplicados</p><p>Itens por página 10</p>'));
@@ -80,6 +81,8 @@ test('não trata bloqueio HTTP nem dados ausentes como uma busca sem vagas', asy
   try {
     globalThis.fetch = (async () => new Response('Bloqueado', { status: 403 })) as typeof fetch;
     await assert.rejects(coletarVagas(identificarOrigem('https://inmetrics.gupy.io/'), 'Inmetrics'), /HTTP 403/);
+    globalThis.fetch = (async () => new Response(null, { status: 302, headers: { Location: 'https://outro.exemplo.com/' } })) as typeof fetch;
+    await assert.rejects(coletarVagas(identificarOrigem('https://inmetrics.gupy.io/'), 'Inmetrics'), /HTTP 302/);
     assert.throws(() => extrairListagemInmetrics('<p>Indisponível</p>', 'Inmetrics'), /não encontrados/);
     assert.throws(() => extrairListagemInmetrics(pagina({ jobs: [] }), 'Inmetrics'), /incompleta/);
     assert.deepEqual(extrairListagemInmetrics(pagina({ jobs: [] }, 'Não há vagas'), 'Inmetrics'), []);

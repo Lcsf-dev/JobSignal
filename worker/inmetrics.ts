@@ -26,7 +26,7 @@ function dadosDaPagina(html: string): Registro {
 async function obterPagina(url: string): Promise<string> {
   const resposta = await fetch(url, {
     headers: { Accept: 'text/html', 'User-Agent': 'JobSignal/1.0 (monitor pessoal de vagas)' },
-    redirect: 'error', signal: AbortSignal.timeout(25000)
+    redirect: 'manual', signal: AbortSignal.timeout(25000)
   });
   if (!resposta.ok) throw new Error(`Inmetrics respondeu HTTP ${resposta.status}.`);
   if (Number(resposta.headers.get('content-length') || 0) > 1_000_000) {
