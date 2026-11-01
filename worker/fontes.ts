@@ -1,4 +1,5 @@
 import type { VagaColetada } from './classificador';
+import { coletarInmetrics } from './inmetrics.ts';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut,
   extrairVagasApinfo, extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
@@ -39,6 +40,9 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
   }
   if (['remotar.com.br', 'www.remotar.com.br'].includes(host) && partes[0] === 'company' && /^\d+$/.test(partes[1] ?? '')) {
     return { plataforma: 'remotar', identificador: partes[1], url: url.toString() };
+  }
+  if (host === 'inmetrics.gupy.io' && url.pathname === '/') {
+    return { plataforma: 'gupy', identificador: 'inmetrics', url: 'https://inmetrics.gupy.io/' };
   }
   if (host === 'portal.gupy.io' && url.pathname.startsWith('/job-search/')) return { plataforma: 'gupy', identificador: null, url: url.toString() };
   if (['www.infojobs.com.br', 'infojobs.com.br'].includes(host) && /^\/vagas-/i.test(url.pathname)) return { plataforma: 'infojobs', identificador: null, url: url.toString() };
@@ -191,6 +195,7 @@ export async function coletarVagas(
   browser?: BrowserRun,
   reservarBrowserRun?: ReservarBrowserRun
 ): Promise<VagaColetada[]> {
+  if (origem.plataforma === 'gupy' && origem.identificador === 'inmetrics') return coletarInmetrics(empresa);
   if (origem.plataforma === 'nttdata') {
     const endereco = new URL('https://careers.nttdata.com/br/pt/search-results');
     endereco.searchParams.set('qcountry', 'Brazil');
