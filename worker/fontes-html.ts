@@ -103,7 +103,7 @@ export function extrairVagasCatho(html: string, empresa: string, base: string): 
   const itens = [...html.matchAll(/<li\b(?=[^>]*\bdata-offer-item=["'](\d+)["'])[^>]*>([\s\S]*?)(?=<li\b(?=[^>]*\bdata-offer-item=)|$)/gi)];
   if (!itens.length) throw new Error('Listagem da Catho não encontrada no formato esperado.');
   if (itens.length > 100) throw new Error('Listagem da Catho excedeu 100 anúncios.');
-  return itens.flatMap((item) => {
+  const vagas = itens.flatMap((item) => {
     const trecho = item[2];
     const link = trecho.match(/<h2\b[^>]*class=["'][^"']*title_offer[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
     const url = link ? normalizarLink(link[1], base) : null;
@@ -113,6 +113,8 @@ export function extrairVagasCatho(html: string, empresa: string, base: string): 
     return [{ idExterno: item[1], titulo, empresa: valorDaClasse(trecho, 'company') || empresa,
       url, localidade: `${texto} · Brasil`, descricao: texto }];
   });
+  if (!vagas.length) throw new Error('Listagem da Catho não encontrada no formato esperado.');
+  return vagas;
 }
 
 export function extrairVagasApinfo(html: string, empresa: string, base: string): VagaColetada[] {

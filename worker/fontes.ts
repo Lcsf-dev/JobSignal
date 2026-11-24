@@ -1,5 +1,6 @@
 import type { VagaColetada } from './classificador';
 import { coletarInmetrics } from './inmetrics.ts';
+import { coletarFonteAdicional, type PlataformaAdicional } from './fontes-adicionais.ts';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairLinksCwi, extrairListagemRecrut,
   extrairVagasApinfo, extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
@@ -11,7 +12,7 @@ const agenteCatho = 'Mozilla/5.0 (compatible; JobSignal/1.0)';
 type ReservarBrowserRun = () => Promise<void>;
 
 export interface OrigemIdentificada {
-  plataforma: 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'gupy' | 'infojobs' | 'catho' | 'apinfo' | 'nerdin' | 'geekhunter' | 'vagas' | 'nttdata' | 'pendente';
+  plataforma: PlataformaAdicional | 'greenhouse' | 'lever' | 'recrutai' | 'ciandt' | 'cwi' | 'remotar' | 'gupy' | 'infojobs' | 'catho' | 'apinfo' | 'nerdin' | 'geekhunter' | 'vagas' | 'nttdata' | 'pendente';
   identificador: string | null;
   url: string;
 }
@@ -54,6 +55,21 @@ export function identificarOrigem(entrada: string): OrigemIdentificada {
   if ((host === 'careers.emeal.nttdata.com' && /^\/s\/jobs\/?$/i.test(url.pathname))
     || (host === 'careers.nttdata.com' && /^\/br\/pt\/search-results\/?$/i.test(url.pathname))) {
     return { plataforma: 'nttdata', identificador: 'phenom', url: 'https://careers.nttdata.com/br/pt/search-results?qcountry=Brazil' };
+  }
+  if (['mjv.inhire.app', 'dataside.inhire.app'].includes(host) && /^\/vagas\/?$/i.test(url.pathname)) {
+    return { plataforma: 'inhire', identificador: host.split('.')[0], url: `https://${host}/vagas` };
+  }
+  if (host === 'ebix.compleo.com.br' && url.pathname === '/') {
+    return { plataforma: 'compleo', identificador: 'ebix', url: 'https://ebix.compleo.com.br/' };
+  }
+  if (['capgemini.com', 'www.capgemini.com'].includes(host) && /^\/br-pt\/carreira\/busca-de-vagas\/?$/i.test(url.pathname)) {
+    return { plataforma: 'capgemini', identificador: null, url: 'https://www.capgemini.com/br-pt/carreira/busca-de-vagas/' };
+  }
+  if (['ibm.com', 'www.ibm.com'].includes(host) && /^\/br-pt\/careers\/search\/?$/i.test(url.pathname)) {
+    return { plataforma: 'ibm', identificador: null, url: 'https://www.ibm.com/br-pt/careers/search' };
+  }
+  if (['foursys.com.br', 'www.foursys.com.br'].includes(host) && /^\/carreiras\/?$/i.test(url.pathname)) {
+    return { plataforma: 'foursys', identificador: null, url: 'https://foursys.com.br/carreiras' };
   }
   return { plataforma: 'pendente', identificador: null, url: url.toString() };
 }
@@ -116,10 +132,14 @@ async function rasparComBrowserRun(
   }
   const dados = await resposta.json() as {
     success?: boolean;
-    errors?: { message?: string };
+    errors?: Array<{ message?: string }>;
+    meta?: { status?: number };
     result?: Array<{ results?: Array<{ html?: string; attributes?: Array<{ name?: string; value?: string }> }> }>;
   };
-  if (!dados.success) throw new Error(`Browser Run: ${dados.errors?.message ?? 'não foi possível carregar a listagem.'}`);
+  if (plataforma === 'catho' && dados.meta?.status === 403) {
+    throw new Error('A Catho bloqueou a consulta automatizada (HTTP 403), inclusive no Browser Run.');
+  }
+  if (!dados.success) throw new Error(`Browser Run: ${dados.errors?.[0]?.message ?? 'não foi possível carregar a listagem.'}`);
   const html = reconstruirHtmlRaspado(plataforma, dados.result?.[0]?.results ?? []);
   if (!html) throw new Error(plataforma === 'catho'
     ? 'A Catho não retornou cartões de vagas com identificador no Browser Run.'
@@ -196,6 +216,10 @@ export async function coletarVagas(
   reservarBrowserRun?: ReservarBrowserRun
 ): Promise<VagaColetada[]> {
   if (origem.plataforma === 'gupy' && origem.identificador === 'inmetrics') return coletarInmetrics(empresa);
+  switch (origem.plataforma) {
+    case 'inhire': case 'compleo': case 'capgemini': case 'ibm': case 'foursys':
+      return coletarFonteAdicional(origem.plataforma, empresa, origem.identificador);
+  }
   if (origem.plataforma === 'nttdata') {
     const endereco = new URL('https://careers.nttdata.com/br/pt/search-results');
     endereco.searchParams.set('qcountry', 'Brazil');
@@ -223,10 +247,8 @@ export async function coletarVagas(
     try {
       return extrairVagasCatho(await obterTexto(origem.url, 'html', agenteCatho), empresa, origem.url);
     } catch (erro) {
-      const deveTentarBrowserRun = erro instanceof Error
-        && /HTTP 403|HTTP 429|HTTP 5\d\d|timeout|aborted|Listagem da Catho não encontrada no formato esperado/i.test(erro.message);
-      if (!deveTentarBrowserRun || !browser || !reservarBrowserRun) throw erro;
-      return extrairVagasCatho(await rasparComBrowserRun(browser, 'catho', origem.url, reservarBrowserRun), empresa, origem.url);
+      const detalhe = erro instanceof Error ? erro.message : 'Falha desconhecida.';
+      throw new Error(`Consulta gratuita da Catho indisponível: ${detalhe} Nenhum serviço pago foi acionado.`);
     }
   }
   if (['gupy', 'infojobs', 'nerdin', 'geekhunter', 'vagas'].includes(origem.plataforma)) {

@@ -46,7 +46,14 @@
         }
 
         @if (aba() === 'vagas' || aba() === 'pendentes' || aba() === 'descartadas') {
-          <div class="page-heading"><div><div class="sobretitulo">{{ aba() === 'vagas' ? 'OPORTUNIDADES ENCONTRADAS' : aba() === 'pendentes' ? 'REVISÃO MANUAL' : 'FORA DOS CRITÉRIOS' }}</div><h1>{{ aba() === 'vagas' ? 'Vagas elegíveis' : aba() === 'pendentes' ? 'Vagas pendentes' : 'Vagas descartadas' }}<span>.</span></h1><p>{{ aba() === 'vagas' ? 'Vagas de TI iniciais, remotas e disponíveis no Brasil.' : aba() === 'pendentes' ? 'Confira o anúncio para confirmar os critérios que faltam.' : 'Veja qual informação do anúncio fez cada vaga sair do monitoramento.' }}</p></div></div>
+          <div class="page-heading"><div><div class="sobretitulo">{{ aba() === 'vagas' ? 'OPORTUNIDADES ENCONTRADAS' : aba() === 'pendentes' ? 'REVISÃO MANUAL' : 'FORA DOS CRITÉRIOS' }}</div><h1>{{ aba() === 'vagas' ? 'Vagas elegíveis' : aba() === 'pendentes' ? 'Vagas pendentes' : 'Vagas descartadas' }}<span>.</span></h1><p>{{ aba() === 'vagas' ? 'Vagas de TI iniciais, remotas e disponíveis no Brasil.' : aba() === 'pendentes' ? 'Faltam informações para confirmar os critérios. Confira o motivo e o anúncio original.' : 'Excluídas automaticamente por nível, modalidade, área ou outros critérios. Confira o motivo em cada vaga.' }}</p></div></div>
+          @if (aba() !== 'vagas') {
+            <form class="filtro-empresa" (ngSubmit)="buscarPorEmpresa()">
+              <div><label for="buscaEmpresa">Buscar por empresa</label><input id="buscaEmpresa" name="buscaEmpresa" type="search" [(ngModel)]="buscaEmpresa" maxlength="100" placeholder="Nome completo ou parte dele. Ex.: Dataside ou data" /></div>
+              <button type="submit" class="botao secundario" [disabled]="carregando()">{{ carregando() ? 'Buscando…' : 'Buscar' }}</button>
+              @if (empresaFiltrada()) { <button type="button" class="botao texto" (click)="buscarPorEmpresa(true)" [disabled]="carregando()">Limpar filtro</button> }
+            </form>
+          }
           <div class="lista-vagas">
             @for (vaga of aba() === 'vagas' ? vagas() : aba() === 'pendentes' ? pendentes() : descartadas(); track vaga.id) {
               <article class="card vaga-card">
@@ -55,12 +62,17 @@
                 <p class="vaga-motivo">@if (vaga.classificacao === 'pendente') { <strong>O que falta confirmar:</strong> } @else if (vaga.classificacao === 'descartada') { <strong>Por que foi descartada:</strong> } {{ vaga.motivo }}</p>
                 <div class="vaga-footer"><a class="botao secundario" [href]="vaga.url" target="_blank" rel="noopener noreferrer">{{ vaga.classificacao === 'pendente' ? 'Conferir anúncio original ↗' : 'Abrir anúncio original ↗' }}</a>@if (aba() === 'vagas') { <div class="vaga-acoes"><select [value]="acompanhamentoDaVaga(vaga)" (change)="selecionarAcompanhamento(vaga.id, $any($event.target).value)" [attr.aria-label]="'Acompanhamento de ' + vaga.titulo"><option value="novo">Nova</option><option value="interesse">Tenho interesse</option><option value="candidatura">Me candidatei</option><option value="descartado">Descartada por mim</option></select><button type="button" class="botao primario" (click)="confirmarVaga(vaga)" [disabled]="salvandoVaga() !== null">{{ salvandoVaga() === vaga.id ? 'Salvando…' : 'OK' }}</button></div> }</div>
               </article>
-            } @empty { <section class="card vazio-grande"><b>✦</b><h2>Nenhuma vaga por aqui ainda</h2><p>Os resultados aparecerão após as próximas consultas.</p></section> }
+            } @empty { <section class="card vazio-grande"><b>✦</b><h2>{{ aba() !== 'vagas' && empresaFiltrada() ? 'Nenhuma vaga encontrada para esta empresa' : 'Nenhuma vaga por aqui ainda' }}</h2><p>{{ aba() !== 'vagas' && empresaFiltrada() ? 'Tente outra parte do nome ou limpe o filtro.' : 'Os resultados aparecerão após as próximas consultas.' }}</p></section> }
           </div>
         }
 
         @if (aba() === 'historico_vagas') {
-          <div class="page-heading"><div><div class="sobretitulo">ACOMPANHAMENTO</div><h1>Histórico de vagas<span>.</span></h1><p>Vagas em que você se candidatou ou decidiu descartar. Você pode restaurá-las.</p></div></div>
+          <div class="page-heading"><div><div class="sobretitulo">ACOMPANHAMENTO</div><h1>Histórico de vagas<span>.</span></h1><p>Vagas que você marcou como “Me candidatei” ou “Descartada por mim”. Você pode restaurá-las.</p></div></div>
+          <form class="filtro-empresa" (ngSubmit)="buscarPorEmpresa()">
+            <div><label for="buscaEmpresaHistorico">Buscar por empresa</label><input id="buscaEmpresaHistorico" name="buscaEmpresaHistorico" type="search" [(ngModel)]="buscaEmpresa" maxlength="100" placeholder="Nome completo ou parte dele. Ex.: Dataside ou data" /></div>
+            <button type="submit" class="botao secundario" [disabled]="carregando()">{{ carregando() ? 'Buscando…' : 'Buscar' }}</button>
+            @if (empresaFiltrada()) { <button type="button" class="botao texto" (click)="buscarPorEmpresa(true)" [disabled]="carregando()">Limpar filtro</button> }
+          </form>
           <div class="lista-vagas">
             @for (vaga of vagasArquivadas(); track vaga.id) {
               <article class="card vaga-card">
@@ -68,7 +80,7 @@
                 <div class="tags"><span class="chip">{{ rotuloAcompanhamento(vaga.acompanhamento) }}</span><span class="chip">Arquivada em {{ data(vaga.arquivada_em) }}</span><span class="chip">Encontrada em {{ data(vaga.primeira_deteccao) }}</span></div>
                 <div class="vaga-footer"><a class="botao secundario" [href]="vaga.url" target="_blank" rel="noopener noreferrer">Abrir anúncio original ↗</a><button type="button" class="botao texto" (click)="restaurarVaga(vaga)" [disabled]="salvandoVaga() !== null">{{ salvandoVaga() === vaga.id ? 'Restaurando…' : 'Restaurar vaga' }}</button></div>
               </article>
-            } @empty { <section class="card vazio-grande"><b>◷</b><h2>Nenhuma vaga no histórico</h2><p>Ao confirmar “Me candidatei” ou “Descartada por mim”, a vaga aparecerá aqui.</p></section> }
+            } @empty { <section class="card vazio-grande"><b>◷</b><h2>{{ empresaFiltrada() ? 'Nenhuma vaga encontrada para esta empresa' : 'Nenhuma vaga no histórico' }}</h2><p>{{ empresaFiltrada() ? 'Tente outra parte do nome ou limpe o filtro.' : 'Ao confirmar “Me candidatei” ou “Descartada por mim”, a vaga aparecerá aqui.' }}</p></section> }
           </div>
           @if (historicoVagasTemMais()) { <div class="historico-vagas-mais"><button type="button" class="botao secundario" (click)="carregarMaisHistoricoVagas()" [disabled]="carregando()">{{ carregando() ? 'Carregando…' : 'Carregar mais vagas' }}</button></div> }
         }

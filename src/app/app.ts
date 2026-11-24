@@ -40,6 +40,8 @@ export class App {
   readonly pendentes = signal<Vaga[]>([]);
   readonly descartadas = signal<Vaga[]>([]);
   readonly vagasArquivadas = signal<Vaga[]>([]);
+  readonly empresaFiltrada = signal('');
+  buscaEmpresa = '';
   readonly historicoVagasTemMais = signal(false);
   readonly historicoVagasPagina = signal(0);
   readonly acompanhamentoSelecionado = signal<Record<number, string>>({});
@@ -92,10 +94,11 @@ export class App {
   async carregar(): Promise<void> {
     this.carregando.set(true); this.erro.set('');
     try {
+      const empresa = encodeURIComponent(this.empresaFiltrada());
       const [estado, fontes, vagas, pendentes, descartadas, arquivadas, historico] = await Promise.all([
         this.api<Estado>('/estado'), this.api<Fonte[]>('/fontes'), this.api<Vaga[]>('/vagas?classificacao=elegivel'),
-        this.api<Vaga[]>('/vagas?classificacao=pendente'), this.api<Vaga[]>('/vagas?classificacao=descartada'),
-        this.api<Vaga[]>('/vagas?arquivadas=1'),
+        this.api<Vaga[]>(`/vagas?classificacao=pendente&empresa=${empresa}`), this.api<Vaga[]>(`/vagas?classificacao=descartada&empresa=${empresa}`),
+        this.api<Vaga[]>(`/vagas?arquivadas=1&empresa=${empresa}`),
         this.api<Execucao[]>('/execucoes')
       ]);
       this.estado.set(estado);
@@ -105,7 +108,10 @@ export class App {
       this.vagasArquivadas.set(arquivadas.slice(0, 100));
       this.historicoVagasTemMais.set(arquivadas.length > 100);
       this.historicoVagasPagina.set(0);
-      this.historico.set(historico); this.conectado.set(true);
+      this.historico.set(historico);
+      this.detalhesExecucao.set({});
+      this.execucaoAberta.set(null);
+      this.conectado.set(true);
     } catch (erro) { this.falha(erro); } finally { this.carregando.set(false); this.restaurandoSessao.set(false); }
   }
 
@@ -118,7 +124,6 @@ export class App {
   async alternarDetalhes(execucaoId: number): Promise<void> {
     if (this.execucaoAberta() === execucaoId) { this.execucaoAberta.set(null); return; }
     this.execucaoAberta.set(execucaoId);
-    if (this.detalhesExecucao()[execucaoId]) return;
     this.execucaoCarregando.set(execucaoId);
     try {
       const tarefas = await this.api<TarefaExecucao[]>(`/execucoes/${execucaoId}/tarefas`);
@@ -255,12 +260,33 @@ export class App {
     finally { this.salvandoVaga.set(null); }
   }
 
+  async buscarPorEmpresa(limpar = false): Promise<void> {
+    if (this.carregando()) return;
+    if (limpar) this.buscaEmpresa = '';
+    const empresa = this.buscaEmpresa.trim();
+    const parametro = encodeURIComponent(empresa);
+    this.carregando.set(true); this.erro.set('');
+    try {
+      const [pendentes, descartadas, arquivadas] = await Promise.all([
+        this.api<Vaga[]>(`/vagas?classificacao=pendente&empresa=${parametro}`),
+        this.api<Vaga[]>(`/vagas?classificacao=descartada&empresa=${parametro}`),
+        this.api<Vaga[]>(`/vagas?arquivadas=1&empresa=${parametro}`)
+      ]);
+      this.pendentes.set(pendentes); this.descartadas.set(descartadas);
+      this.vagasArquivadas.set(arquivadas.slice(0, 100));
+      this.historicoVagasTemMais.set(arquivadas.length > 100);
+      this.historicoVagasPagina.set(0);
+      this.empresaFiltrada.set(empresa);
+    } catch (erro) { this.falha(erro); }
+    finally { this.carregando.set(false); }
+  }
+
   async carregarMaisHistoricoVagas(): Promise<void> {
     if (this.carregando() || !this.historicoVagasTemMais()) return;
     this.carregando.set(true);
     try {
       const pagina = this.historicoVagasPagina() + 1;
-      const vagas = await this.api<Vaga[]>(`/vagas?arquivadas=1&pagina=${pagina}`);
+      const vagas = await this.api<Vaga[]>(`/vagas?arquivadas=1&pagina=${pagina}&empresa=${encodeURIComponent(this.empresaFiltrada())}`);
       this.vagasArquivadas.set([...this.vagasArquivadas(), ...vagas.slice(0, 100)]);
       this.historicoVagasTemMais.set(vagas.length > 100);
       this.historicoVagasPagina.set(pagina);

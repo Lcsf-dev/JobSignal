@@ -50,9 +50,13 @@ Abra o endereço informado pelo Wrangler e insira a chave configurada. O Worker 
 
 ## 🔗 Fontes e critérios
 
-Cadastre a página de listagem de vagas de uma fonte compatível. O projeto possui adaptadores para Greenhouse, Lever, Recrut.ai, CI&T, CWI, Remotar, Gupy, InfoJobs, Catho, APInfo, Nerdin, GeekHunter, Vagas.com e o portal de carreiras da NTT DATA.
+Cadastre a página de listagem de vagas de uma fonte compatível. O projeto possui adaptadores para Greenhouse, Lever, Recrut.ai, CI&T, CWI, Remotar, Gupy, InfoJobs, Catho, APInfo, Nerdin, GeekHunter, Vagas.com, NTT DATA, MJV (InHire), EBIX (Compleo), Capgemini, IBM e Foursys.
 
 Os adaptadores dependem dos formatos públicos disponibilizados por cada site. Mudanças nesses formatos ou bloqueios de acesso podem interromper a coleta; as falhas aparecem no histórico de buscas. Links sem integração reconhecida não são consultados automaticamente.
+
+A Catho usa somente a consulta direta à listagem pública, sem GeckoAPI ou Browser Run. Se o site bloquear o acesso automatizado, a fonte registra o erro HTTP e não aciona serviços pagos. A consulta gratuita permanece sujeita a esse bloqueio; não há garantia de coleta automática da Catho. Os identificadores originais das vagas são mantidos para respeitar o histórico de acompanhamento.
+
+As cinco novas integrações usam consultas públicas sem chave ou assinatura de provedor de coleta. Capgemini e IBM têm paginação e filtro para Brasil; a Foursys coleta somente os cartões publicados em sua própria página, mantendo os links do LinkedIn. Na EBIX, uma listagem vazia confirmada pelo portal é um resultado válido. A Recrut.ai consulta os detalhes apenas dos títulos de início de carreira, portanto DATUM e INSI podem registrar zero mesmo quando há anúncios de outros níveis.
 
 ## ✉️ Notificações por e-mail
 
@@ -73,7 +77,7 @@ npm run db:remoto
 npm run publicar
 ```
 
-`npm run publicar` compila o Angular e publica o Worker com seus arquivos estáticos. Cadastre `ACESSO_TOKEN` e `EMAIL_ENCRYPTION_KEY` como segredos do Worker com `npx wrangler secret put NOME_DO_SEGREDO`; nunca inclua valores reais no repositório.
+`npm run publicar` compila o Angular e publica o Worker com seus arquivos estáticos. Cadastre `ACESSO_TOKEN` e `EMAIL_ENCRYPTION_KEY` como segredos do Worker com `npx wrangler secret put NOME_DO_SEGREDO`; nunca inclua valores reais no repositório. `GECKO_API_KEY` não é usada nas buscas, mesmo se já estiver configurada no ambiente publicado.
 
 ## ✅ Verificação
 

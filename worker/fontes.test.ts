@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { classificar } from './classificador.ts';
 import { coletarVagas, identificarOrigem, interpretarVagaRemotar } from './fontes.ts';
+import { coletarVagasCathoGecko } from './catho-gecko.ts';
 import {
   extrairDetalheCwi, extrairDetalheRecrut, extrairListagemRecrut, extrairVagasApinfo,
   extrairVagasCatho, extrairVagasGeekHunter, extrairVagasGupy,
@@ -133,6 +135,64 @@ test('consulta Catho com agente identificado e lê vagas sem usar Browser Run', 
   } finally {
     globalThis.fetch = fetchAnterior;
   }
+});
+
+test('adaptador legado GeckoAPI preserva identificadores, sem participar da busca automática', async () => {
+  const url = 'https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/';
+  const chamadas: number[] = [];
+  const fetchAnterior = globalThis.fetch;
+  globalThis.fetch = (async (entrada: RequestInfo | URL, opcoes?: RequestInit) => {
+    if (String(entrada) === url) return new Response('Bloqueado', { status: 403 });
+    assert.equal(String(entrada), 'https://api.geckoapi.com.br/v1/extract');
+    assert.equal(new Headers(opcoes?.headers).get('Authorization'), 'Bearer chave-de-teste');
+    const pedido = JSON.parse(String(opcoes?.body)) as { page: number; workModel: string[] };
+    chamadas.push(pedido.page);
+    assert.deepEqual(pedido.workModel, ['remote']);
+    const anuncio = (id: number) => ({ id, title: 'Est&#xE1;gio em TI',
+      url: `https://www.catho.com.br/vagas/estagio-em-ti/${id}/`,
+      description: 'Desenvolvimento de software', jobLocation: 'Rio de Janeiro', active: true });
+    const itens = pedido.page === 1 ? [anuncio(38669900)] : [anuncio(38669900), anuncio(38669901)];
+    return Response.json({ data: { items: itens, nextPage: pedido.page === 1 ? 2 : null,
+      query: { workModel: ['remote'] } } });
+  }) as typeof fetch;
+  try {
+    const vagas = await coletarVagasCathoGecko(url, 'Catho', 'chave-de-teste');
+    assert.deepEqual(chamadas, [1, 2]);
+    assert.deepEqual(vagas.map((vaga) => vaga.idExterno), ['38669900', '38669901']);
+    assert.equal(vagas[0]?.titulo, 'Estágio em TI');
+    assert.match(vagas[0]?.localidade ?? '', /Remoto.*Brasil/);
+    assert.equal(classificar(vagas[0]!, ['estagio', 'trainee', 'junior', 'analista_junior']).classificacao, 'elegivel');
+  } finally { globalThis.fetch = fetchAnterior; }
+});
+
+test('informa falta de créditos da GeckoAPI sem registrar zero vagas', async () => {
+  const url = 'https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/';
+  const fetchAnterior = globalThis.fetch;
+  globalThis.fetch = (async (entrada: RequestInfo | URL) =>
+    new Response('', { status: String(entrada) === url ? 403 : 402 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      coletarVagasCathoGecko(url, 'Catho', 'chave-de-teste'),
+      /créditos insuficientes/
+    );
+  } finally { globalThis.fetch = fetchAnterior; }
+});
+
+test('mostra o bloqueio HTTP da Catho sem acionar GeckoAPI ou Browser Run', async () => {
+  const url = 'https://www.catho.com.br/vagas/ti/rio-de-janeiro-rj/';
+  const fetchAnterior = globalThis.fetch;
+  let chamadas = 0;
+  globalThis.fetch = (async (entrada: RequestInfo | URL) => {
+    chamadas++;
+    assert.equal(String(entrada), url);
+    return new Response('', { status: 403 });
+  }) as typeof fetch;
+  const navegador = { quickAction: async () => { throw new Error('Browser Run não deve ser usado para a Catho.'); } } as unknown as BrowserRun;
+  try {
+    await assert.rejects(coletarVagas(identificarOrigem(url), 'Catho', navegador, async () => {}),
+      /Consulta gratuita da Catho indisponível:.*HTTP 403.*Nenhum serviço pago/);
+    assert.equal(chamadas, 1);
+  } finally { globalThis.fetch = fetchAnterior; }
 });
 
 function paginaNttData(total: number, vagas: Array<Record<string, unknown>>): string {

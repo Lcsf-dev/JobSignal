@@ -302,7 +302,8 @@ async function processarTarefa(env: Ambiente, tarefaId: number): Promise<void> {
   let novas = 0;
   try {
     const origem = identificarOrigem(tarefa.url);
-    const vagas = await coletarVagas(origem, tarefa.nome, env.BROWSER, () => reservarChamadaBrowserRun(env.DB));
+    const vagas = await coletarVagas(origem, tarefa.nome, env.BROWSER,
+      () => reservarChamadaBrowserRun(env.DB));
     const configuracao = await configuracaoAtual(env.DB);
     const tipos = JSON.parse(configuracao.tipos) as TipoVaga[];
     for (const vaga of vagas) {
@@ -441,17 +442,20 @@ async function api(request: Request, env: Ambiente): Promise<Response> {
   }
   if (caminho === '/api/vagas' && metodo === 'GET') {
     const url = new URL(request.url);
+    const empresa = (url.searchParams.get('empresa') ?? '').trim().slice(0, 100);
     if (url.searchParams.get('arquivadas') === '1') {
       const pagina = Number(url.searchParams.get('pagina') ?? '0');
       if (!Number.isSafeInteger(pagina) || pagina < 0 || pagina > 10000) return resposta({ erro: 'Página inválida.' }, 400);
       return resposta((await env.DB.prepare(`SELECT v.*, f.nome AS fonte_nome FROM vagas v JOIN fontes f ON f.id = v.fonte_id
-        WHERE v.arquivada_em IS NOT NULL ORDER BY v.arquivada_em DESC, v.id DESC LIMIT 101 OFFSET ?`)
-        .bind(pagina * 100).all()).results);
+        WHERE v.arquivada_em IS NOT NULL AND instr(lower(v.empresa), lower(?)) > 0
+        ORDER BY v.arquivada_em DESC, v.id DESC LIMIT 101 OFFSET ?`)
+        .bind(empresa, pagina * 100).all()).results);
     }
     const filtro = url.searchParams.get('classificacao') ?? 'elegivel';
     if (!['elegivel', 'pendente', 'descartada'].includes(filtro)) return resposta({ erro: 'Filtro inválido.' }, 400);
     return resposta((await env.DB.prepare(`SELECT v.*, f.nome AS fonte_nome FROM vagas v JOIN fontes f ON f.id = v.fonte_id
-      WHERE v.classificacao = ? AND v.arquivada_em IS NULL ORDER BY v.primeira_deteccao DESC, v.id DESC LIMIT 100`).bind(filtro).all()).results);
+      WHERE v.classificacao = ? AND v.arquivada_em IS NULL AND instr(lower(v.empresa), lower(?)) > 0
+      ORDER BY v.primeira_deteccao DESC, v.id DESC LIMIT 100`).bind(filtro, empresa).all()).results);
   }
   const vagaId = /^\/api\/vagas\/(\d+)$/.exec(caminho);
   if (vagaId && metodo === 'PATCH') {
